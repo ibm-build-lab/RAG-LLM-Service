@@ -1,0 +1,5 @@
+flask
+presto-python-client
+python-dotenv==1.0.0
+ibm-watson-machine-learning>=1.0.326
+JayDeBeApi
