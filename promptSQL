@@ -1,0 +1,65 @@
+Instruction: You are a developer writing SQL queries given natural language questions. The database contains 1 table. The schema of the table with description of the attributes is given.
+
+(1) Database Table Name: DEALS
+Table Schema:
+Column Name # Meaning
+DealType # Deal Type with possible values Lease, Finance, Cash
+VehicleSalesDate # Vehicle Sale Date
+SalesDate # Sale Date
+FinalizedBy     # Finalized By
+Vin # VIN Number
+Year # Year
+Make # Make
+Model # Model
+VehicleType # Vehicle Type with possible values Truck,Car, SUV
+Term # Term
+Mileage # Milage
+NewUsed # New or User Vehicle with possible values NEW, USED
+AmtFinanced # Amount Financed
+FinanceReserve # Finance Reserver
+ContractEffectiveDate # Contract Effective Date
+FrontGross # Front Gross
+BackGross # Back Gross
+DownPayment # Down Payment
+BuyRate # Buy Rate
+Apr     # APR
+BuyerFirstName # Buyer First Name
+BuyerLastName # Buyer Last Name
+BuyerZipCode # Buyer Zip Code
+CobuyerFirstName # Co -Buyer First Name
+CobuyerLastName # Co-Buyer Last Name
+CobuyerZipCode # Country Zip Code
+LenderName # Lender name
+LenderCode # Lender Code
+LenderType # Lender Type
+SalesPersonName # Sales Person Name for example Cody Darrington
+SalesManagerName # Sales Manager
+ProducerName # Producer Name
+ProducerCode # Producer Code
+TaxTitleLicenseFee # Tax title License Fee
+TotalSales # Total Taxes
+TotalTaxes # Total Taxes
+TotalFees # Total Fees
+TotalRebates # Total Rebates
+DeliveredDate # Delivered Date
+DeliveredBy # Deliverd By
+ModifiedDate # Modified Date
+DealerName # Dealer Name for example Family Mitsubishi
+
+input: What is the total sales for ABC motors last month?
+output: SELECT SUM(CAST(TotalSales as INT)) as TotalSales, DealerName from DEALS where DealerName='ABC motors' GROUP BY DealerName;
+
+input: What is the total sales for ABC motors last month?How many are used and new cars?
+output: SELECT NewUsed, SUM(CAST(TotalSales as INT)) as TotalSales, DealerName, COUNT(*) as Count from DEALS where DealerName='ABC motors' GROUP BY NewUsed, DealerName;
+
+input: What is the total sales for ABC motors last month?How many are used and new cars?What is the sales by Mark Stevens? 
+output: SELECT NewUsed, SUM(CAST(TotalSales as INT)) as TotalSales, DealerName, SalesPersonName, COUNT(*) as Count, from DEALS where DealerName='ABC motors' and SalesPersonName='Mark Stevens' GROUP BY NewUsed,DealerName,SalesPersonName;
+
+input: What is the total sales for ABC motors last month?How many are used and new cars?What is the sales by Jordan?How many are used and new cars?
+output: SELECT NewUsed, SUM(CAST(TotalSales as INT)) as TotalSales, DealerName, SalesPersonName, COUNT(*) as Count from DEALS where DealerName='ABC motors' and SalesPersonName='Jordan' GROUP BY NewUsed;
+
+input: What is the total sales for ABC motors last month?How many are used and new cars?What is the sales by Jordan?What are the top 5 makes he sold?
+output: SELECT Make, SUM(CAST(TotalSales as INT)) as TotalSales, DealerName, SalesPersonName, COUNT(*) as Count from DEALS where DealerName='ABC motors' and SalesPersonName='Jordan' group by Make ORDER BY COUNT(*) DESC;
+
+input: What is the total sales for ABC motors last month?How many are used and new cars?What is the sales by Jordan?What are the top five makes he sold?
+output: SELECT Make, DealerName, SalesPersonName, COUNT(*) as Volume from DEALS where DealerName='ABC motors' and SalesPersonName='Jordan' GROUP BY Make, DealerName, SalesPersonName ORDER BY Volume DESC LIMIT 5;
