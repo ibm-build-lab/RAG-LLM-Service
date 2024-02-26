@@ -1,48 +1,58 @@
-from flask import Flask, render_template, jsonify, request
+import json
+import os, getpass
+import pandas as pd
+import jaydebeapi
+import uvicorn
+import sys
+import utils
+
 from dotenv import load_dotenv
+# IBM COS
+import ibm_boto3
+from ibm_botocore.client import Config, ClientError
+
+# Fast API
+from fastapi import FastAPI, Form, BackgroundTasks, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+
+# wx.ai
 from ibm_watson_machine_learning.foundation_models import Model
 from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as GenParams
 from ibm_watson_machine_learning.foundation_models.utils.enums import ModelTypes, DecodingMethods
 
 # ElasticSearch
 from elasticsearch import AsyncElasticsearch
-from llama_index import (
-    ServiceContext,
-    VectorStoreIndex,
-    get_response_synthesizer,
-    PromptTemplate,
-)
+from llama_index import ServiceContext, VectorStoreIndex, get_response_synthesizer, PromptTemplate
+
+# Vector Store / WatsonX connection
 from llama_index.llms import WatsonX
 from llama_index.retrievers import VectorIndexRetriever
 from llama_index.query_engine import RetrieverQueryEngine
+from llama_index.indices.document_summary import DocumentSummaryIndex
+from llama_index.ingestion import IngestionPipeline
+from llama_index.node_parser import SentenceSplitter
 
-import prestodb
-import json
-import os, getpass
-import pandas as pd
-import jaydebeapi
 
-import utils
-
-# from elasticsearch.exceptions import NotFoundError
-# from llama_index import download_loader
-# from llama_index.readers.base import BaseReader
-# from llama_index.schema import BaseNode, Document, MetadataMode, TextNode
-# from llama_index.vector_stores.elasticsearch import (
-#     ElasticsearchStore,
-#     _to_elasticsearch_filter,
-#     _to_llama_similarities,
-# )
-# from llama_index.vector_stores.types import (
-#     VectorStoreQuery,
-#     VectorStoreQueryMode,
-#     VectorStoreQueryResult,
-# )
-# from llama_index.vector_stores.utils import metadata_dict_to_node, node_to_metadata_dict
+# Custom type classes
+# from customTypes.classificationRequest import classificationRequest
+# from customTypes.summarizationRequest import summarizationRequest
+from customTypes.queryLLMRequest import queryLLMRequest
+from customTypes.queryLLMResponse import queryLLMResponse
 
 
 
-app = Flask(__name__)
+app = FastAPI()
+
+# Set up CORS
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 load_dotenv()
 
@@ -70,22 +80,166 @@ generate_params = {
     GenParams.REPETITION_PENALTY: 1
 }
 
-@app.route("/")
+
+@app.get("/")
 def index():
-    return render_template('index.html', message="Hello PRS..!!")
+    return {"Hello": "World1"}
 
-@app.route("/ingestDocs", methods=['POST'])
-def ingestDocs():
-    return '{"key":"Hello World"}'
+@app.post("/ingestDocs")
+async def ingestDocs():
+    # Create resource
+    cos = ibm_boto3.resource("s3",
+        ibm_api_key_id=os.environ.get("COS_IBM_CLOUD_API_KEY"),
+        ibm_service_instance_id=os.environ.get("COS_INSTANCE_ID"),
+        ibm_auth_endpoint="https://iam.cloud.ibm.com/identity/token",
+        config=Config(signature_version="oauth"),
+        endpoint_url="https://s3.us-south.cloud-object-storage.appdomain.cloud"
+    )
+    files = cos.Bucket(os.environ.get("BUCKET_NAME")).objects.all()
+    print(files)
+    cos_reader = utils.CloudObjectStorageReader(
+        bucket_name = os.environ.get("BUCKET_NAME"),
+        credentials = {
+            "apikey": os.environ.get("COS_IBM_CLOUD_API_KEY"),
+            "service_instance_id": os.environ.get("COS_INSTANCE_ID")
+        },
+        hostname = "https://s3.us-south.cloud-object-storage.appdomain.cloud"
+    )
 
+    print(cos_reader.list_files())
+ 
+    documents = await cos_reader.load_data()
+    print(f"Total documents: {len(documents)}\nExample document:\n{documents[0]}")
+    ingestion_pipeline = IngestionPipeline(
+        transformations=[
+            SentenceSplitter.from_defaults(
+                chunk_size=512, chunk_overlap=256
+            ),
+        ]
+    )
+    nodes = ingestion_pipeline.run(documents=documents)
+    nodes[0]
+
+    async_es_client = AsyncElasticsearch(
+            wxd_creds["wxdurl"],
+            basic_auth=(wxd_creds["username"], wxd_creds["password"]),
+            verify_certs=False,
+            request_timeout=3600,
+    )
+
+    await async_es_client.info()
+    
+    index_config = {
+        "mappings": {
+            "properties": {"ml.tokens": {"type": "rank_features"}, "body_content_field": {"type": "text"}}
+        }
+    }
+    
+    print( index_config)
+    
+    pipeline_config = {
+        "description": "Inference pipeline using elser model",
+        "processors": [
+            {
+                "inference": {
+                    "field_map": {"body_content_field": "text_field"},
+                    "model_id": ".elser_model_1",
+                    "target_field": "ml",
+                    "inference_config": {"text_expansion": {"results_field": "tokens"}},
+                }
+            },
+        {
+            "set": {
+                "field": "file_name",
+                "value": "{{metadata.filename}}"
+            }
+        },
+        {
+            "set": {
+                "field": "url",
+                "value": "{{metadata.url}}"
+            }
+        },
+        {
+            "append": {
+                "field": "_source._ingest.processors",
+                "value": [
+                        {
+                            "model_version": "10.0.0",
+                            "pipeline": "pipeline-created-in-watson-studio-notebook",
+                            "processed_timestamp": "{{{ _ingest.timestamp }}}",
+                            "types": ["pytorch", "text_expansion"],
+                        }
+                    ],
+                }
+            },
+        ],
+        "version": 1,
+    }
+    await create_index(async_es_client, "index-created-in-watson-studio-notebook", index_config)
+    await create_inference_pipeline(async_es_client, "pipeline-created-in-watson-studio-notebook", pipeline_config)
+    # vector_store = ElserElasticsearchStore(
+    #     es_client=async_es_client,
+    #     index_name=os.environ.get("ES_INDEX_NAME"),
+    #     pipeline_name=os.environ.get("ES_PIPELINE_NAME"),
+    #     model_id=os.environ.get("EMBEDDING_MODEL_NAME"),
+    #     text_field=os.environ.get("INDEX_TEXT_FIELD"),
+    #     batch_size=10
+    # )
+    # added_node_ids = vector_store.async_add(nodes)
+    # print("added node ids: " + str(added_node_ids))
+    #print(f"Added {len(added_node_ids)} nodes to index {INDEX_NAME} using pipeline {PIPELINE_NAME}")
+
+    return {"success":"true"}
+
+
+async def create_index(client, index_name, index_settings):
+    print("Creating the index...")
+    try:
+        if await client.indices.exists(index=index_name):
+            print("Deleting the existing index with same name")
+            await client.indices.delete(index=index_name)
+        response = await client.indices.create(index=index_name, body=index_settings)
+        print(response)
+    except Exception as e:
+        print(f"An error occurred when creating the index: {e}")
+        response = e
+        pass
+    return response
+
+
+async def create_inference_pipeline(client, pipeline_name, pipeline_settings):
+    print("Creating the inference pipeline...")
+    try:
+        if await client.ingest.get_pipeline(id=pipeline_name):
+            print("Deleting the existing pipeline with same name")
+            await client.ingest.delete_pipeline(id=pipeline_name)
+    except:
+        pass
+    response = await client.ingest.put_pipeline(id=pipeline_name, body=pipeline_settings)
+    print(response)
+    return response
 
 # This function is NOT using the WML library to call the LLM. It is using
 # llama_index
-@app.route("/getDocsWithLLM", methods=['POST'])
-def getDocsWithLLM():
-    
-    question = "What are some key features of Watsonx.governance?"
-    
+@app.post("/queryLLM")
+def queryLLM(request: queryLLMRequest)->queryLLMResponse:
+    question         = request.question
+    index_name       = request.es_index_name
+    index_text_field = request.es_index_text_field
+    es_model_name    = request.es_model_name
+    num_results      = request.num_results
+    llm_params       = request.llm_params
+
+    # Sets the llm instruction if the user provides it
+    if not request.llm_instructions:
+        llm_instructions = os.environ.get("LLM_INSTRUCTIONS")
+    else:
+        llm_instructions = request.llm_instructions
+
+    # question = "What are some key features of Watsonx.governance?"
+    # index_name = "index-created-in-watson-studio-notebook"
+
     # Format payload for later query
     payload = {
         "input_data": [
@@ -95,117 +249,87 @@ def getDocsWithLLM():
 
     # Attempt to connect to ElasticSearch and call Watsonx for a response
     try:
-        # Not really sure why it's like this.. need to further test..
+        # Setting up the structure of the payload for the query engine
         user_query = payload["input_data"][0]["values"][0][0]
 
-        # from_parameter_set = external_asses["paramset_values"] # No idea what this is
-        index_name = "es_index_name"
-        index_text_field = "body_content_field"
-        es_model_name = "elser_model_1"
-        max_overlap_score = ""
-        concatenated_overlap_score = ""
-        num_results = "es_query_num_results"
-
-        llm_params = {
-            "model_id": "meta-llama/llama-2-70b-chat",
-            "inputs": [],
-            "parameters": {
-                "decoding_method": "greedy",
-                "min_new_tokens": 1,
-                "max_new_tokens": 500,
-                "moderations": {
-                    "hap": {
-                        "input": true,
-                        "threshold": 0.75,
-                        "output": true
-                    }
-                }
-            }
-        }
-
-        llm_instructions = "[INST]<<SYS>>You are a helpful, respectful, and honest assistant. Always answer as helpfully as possible, while being safe. Be brief in your answers. Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don\\'\''t know the answer to a question, please do not share false information. <</SYS>>\nGenerate the next agent response by answering the question. You are provided several documents with titles. If the answer comes from different documents please mention all possibilities and use the tiles of documents to separate between topics or domains. Answer with no more than 150 words. If you cannot base your answer on the given document, please state that you do not have an answer.\n{context_str}<</SYS>>\n\n{query_str} Answer with no more than 150 words. If you cannot base your answer on the given document, please state that you do not have an answer. [/INST]"
-
+        # Create the prompt template based on llm_instructions
         prompt_template = PromptTemplate(llm_instructions)
 
+        # Create a client connection to elastic search
         async_es_client = AsyncElasticsearch(
-            wxd_creds["url"],
+            wxd_creds["wxdurl"],
             basic_auth=(wxd_creds["username"], wxd_creds["password"]),
             verify_certs=False,
             request_timeout=3600,
         )
+        
+        # Create a vector store using the elastic client
         vector_store = utils.ElserElasticsearchStore(
             es_client=async_es_client,
             index_name=index_name,
             pipeline_name="_",
-            model_id=model_name,
+            model_id=es_model_name,
             text_field=index_text_field,
         )
+
+        # Retrieve an index of the ingested documents in the vector store
+        # for later retrieval and querying
         index = VectorStoreIndex.from_vector_store(
             vector_store=vector_store,
             service_context=ServiceContext.from_defaults(embed_model=None, llm=None),
         )
+
+        # Create a retriever object using the index and setting params
         retriever = VectorIndexRetriever(
             index=index,
             vector_store_query_mode="sparse",
             similarity_top_k=num_results,
         )
 
+        # Create the watsonx LLM object that will be used for the RAG pattern
         llm = WatsonX(
             credentials=wml_credentials,
-            space_id=project_id,
-            model_id=llm_params["model_id"],
-            max_new_tokens=llm_params["parameters"]["max_new_tokens"],
-            additional_kwargs=llm_params["parameters"],
+            project_id=project_id,
+            model_id=llm_params.model_id,
+            max_new_tokens=llm_params.parameters.max_new_tokens,
+            additional_kwargs=llm_params.parameters.dict(),
         )
+
+        #
         response_synthesizer = get_response_synthesizer(
             service_context=ServiceContext.from_defaults(embed_model=None, llm=llm),
             text_qa_template=prompt_template,
         )
 
+        # Create the query engine
         query_engine = RetrieverQueryEngine(
             retriever=retriever, response_synthesizer=response_synthesizer
         )
-    
-   
+        
+        # Finally query the engine with the user question
         response = query_engine.query(user_query)
-        (
-            llm_response,
-            max_overlap_score,
-            concatenated_overlap_score,
-        ) = utils.detect_and_process_hallucination(
-            response.response, response.source_nodes
-        )
-        scoring_response = {
-            "predictions": [{"llm_response": llm_response}],
-            "llm_response": llm_response,
-            "references": [node.to_dict() for node in response.source_nodes],
-            "max_overlap_score": round(max_overlap_score, 2),
-            "concatenated_overlap_score": round(concatenated_overlap_score, 2),
+
+        # Format the data
+        data_response = {
+            "llm_response": response.response,
+            "references": [node.to_dict() for node in response.source_nodes]
         }
-        return scoring_response
+
+        return queryLLMResponse(**data_response)
 
     except Exception as e:
-        return {"predictions": [{"error": repr(e)}]}
+        return queryLLMResponse(
+            llm_response = "",
+            references=[{"error": repr(e)}]
+        )
 
-    return '{"key":"issue in getDocsWithLLMs"}'
 
-@app.route("/getDocs", methods=['POST'])
-def getDocs(answer):
-    imageURL=""
+@app.post("/getDocs")
+def getDocs():
+    
+    return ""
 
-    if answer.find("187800") >1:
-      imageURL="https://yasserssandbox-donotdelete-pr-01xjiqorpvqifx.s3.us-south.cloud-object-storage.appdomain.cloud/q1.png"
-    elif answer.find("72800") >1:
-      imageURL="https://yasserssandbox-donotdelete-pr-01xjiqorpvqifx.s3.us-south.cloud-object-storage.appdomain.cloud/q2.png"
-    elif answer.find("BMW") >1:
-      imageURL="https://yasserssandbox-donotdelete-pr-01xjiqorpvqifx.s3.us-south.cloud-object-storage.appdomain.cloud/q4.png"
-    elif answer.find("30000") >1:
-      imageURL="https://yasserssandbox-donotdelete-pr-01xjiqorpvqifx.s3.us-south.cloud-object-storage.appdomain.cloud/q3.png"
-    else:
-      imageURL="https://yasserssandbox-donotdelete-pr-01xjiqorpvqifx.s3.us-south.cloud-object-storage.appdomain.cloud/q1.png"
-    return imageURL
-
-@app.route("/watsonx", methods=['POST'])
+@app.post("/watsonx")
 def watsonx(input, promptType, model):
     
     #GRANITE_13B_CHAT = 'ibm/granite-13b-chat-v1'
@@ -240,63 +364,15 @@ def watsonx(input, promptType, model):
 
     return response
 
-@app.route("/setup_index", methods=['POST'])
+@app.post("/setup_index")
 def setupIndex():
-     
-    request_data = request.get_json()
-    query = request_data['Query']
-
-    conn = jaydebeapi.connect("com.ibm.db2.jcc.DB2Driver", "jdbc:db2://b869522f-19c9-4c7c-9b2a-735b59a54ead.c1ogj3sd0tgtu0lqde00.databases.appdomain.cloud:32002/bludb:user=30734ea0;password=xG2dNqaTiTazCgQC;sslConnection=true;",None, "db2jcc4.jar")
-  
-    '''
-    conn = prestodb.dbapi.connect(
-       host='ibm-lh-lakehouse-presto-01-presto-svc-cpd-instance.apps.65326fcf94ee63001721417c.cloud.techzone.ibm.com',
-       port=443,
-       user='admin',
-       #catalog='tpch',
-       #schema='tiny',
-       catalog='ben',
-       schema='ben',
-       http_scheme='https',
-       auth=prestodb.auth.BasicAuthentication('admin', '1BtJuGhTx4AT')
-    )
-    '''
-    #conn._http_session.verify = "tls.crt"
-    cur = conn.cursor()
-    
-    #cur.execute("SELECT * FROM prsgroup.rzy62361.country")
-    cur.execute(query)
-    rows = cur.fetchall()
-
-    queryResults = pd.DataFrame.from_records(rows, columns = [i[0] for i in cur.description])
-    
-    queryResults2 = queryResults.to_json(orient = 'columns')
-    
-    queryResults2= json.loads(queryResults2)
-    print(queryResults2)
-    output_json = {}
-
-    keys = list(queryResults2.keys())
-     
-    result = []
-
-    for i in range(len(queryResults2['Year'])):
-        obj = {}
-        for key in keys:
-            obj[key] = queryResults2[key][str(i)]
-        result.append(obj)
-
-    #for key in keys:
-    #    output_json[key] = queryResults2[key]["0"]
-
-    output_json_str = json.dumps(result)
-    print(output_json_str)
-  
-    return render_template('index.html', message=output_json_str)
-
-
-def helpFunction():
     return ""
 
+def helpFunction():
+    print("hi")
+    return ""
+
+
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=3000, debug=True)
+    if 'uvicorn' not in sys.argv[0]:
+        uvicorn.run("app:app", host='0.0.0.0', port=3000, reload=True)

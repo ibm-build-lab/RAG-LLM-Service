@@ -1,32 +1,280 @@
-def detect_and_process_hallucination(
-    llm_response,
-    reference_nodes,
-    max_overlap_threshold=from_parameter_set[
-        "hallucination_threshold_max_text_overlap"
-    ],
-    concatenated_overlap_threshold=from_parameter_set[
-        "hallucination_threshold_concatenated_text_overlap"
-    ],
-):
-    context = [
-        {
-            "document_title": node.node.metadata["filename"],
-            "document_text": node.node.text,
-        }
-        for node in reference_nodes
-    ]
-    max_overlap_score, concatenated_overlap_score = utils.get_overlap_scores(
-        llm_response, context
-    )
-    is_hallucination = (
-        max_overlap_score < max_overlap_threshold
-        or concatenated_overlap_score < concatenated_overlap_threshold
-    )
-    if is_hallucination:
-        hallucination_prefix = "WARNING: Given the low max/concatenated text overlap score, LLM response may contain hallucinations. "
-        llm_response = f"{hallucination_prefix}{llm_response}"
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Union,
+    cast,
+    AsyncGenerator,
+)
+from pathlib import Path
 
-    return llm_response, max_overlap_score, concatenated_overlap_score
+from llama_index.vector_stores.elasticsearch import (
+    ElasticsearchStore,
+    _to_elasticsearch_filter,
+    _to_llama_similarities,
+)
+from llama_index import download_loader
+from llama_index.schema import BaseNode, Document, MetadataMode, TextNode
+from llama_index.readers.base import BaseReader
+
+from llama_index.vector_stores.types import (
+    VectorStoreQuery,
+    VectorStoreQueryMode,
+    VectorStoreQueryResult,
+)
+from llama_index.vector_stores.utils import metadata_dict_to_node, node_to_metadata_dict
+
+import requests
+import re
+import asyncio
+import aiohttp
+import logging
+import tempfile
+
+
+# def detect_and_process_hallucination(
+#     llm_response,
+#     reference_nodes,
+#     max_overlap_threshold=from_parameter_set[
+#         "hallucination_threshold_max_text_overlap"
+#     ],
+#     concatenated_overlap_threshold=from_parameter_set[
+#         "hallucination_threshold_concatenated_text_overlap"
+#     ],
+# ):
+#     context = [
+#         {
+#             "document_title": node.node.metadata["filename"],
+#             "document_text": node.node.text,
+#         }
+#         for node in reference_nodes
+#     ]
+#     max_overlap_score, concatenated_overlap_score = utils.get_overlap_scores(
+#         llm_response, context
+#     )
+#     is_hallucination = (
+#         max_overlap_score < max_overlap_threshold
+#         or concatenated_overlap_score < concatenated_overlap_threshold
+#     )
+#     if is_hallucination:
+#         hallucination_prefix = "WARNING: Given the low max/concatenated text overlap score, LLM response may contain hallucinations. "
+#         llm_response = f"{hallucination_prefix}{llm_response}"
+
+#     return llm_response, max_overlap_score, concatenated_overlap_score
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+DEFAULT_READER_NAMES = {
+    ".pdf": "PDFReader",
+    ".docx": "DocxReader",
+    ".pptx": "PptxReader",
+    ".txt": "UnstructuredReader",
+    ".html": "UnstructuredReader",
+}
+
+class CloudObjectStorageReader(BaseReader):
+    """
+    A class used to interact with IBM Cloud Object Storage.
+
+    This class inherits from the BasePydanticReader base class and overrides its methods to work with IBM Cloud Object Storage.
+
+    Compatible with llama-index framework.
+
+    Taken from wxd-setup-and-ingestion repository in skol-assets
+
+    Attributes
+    ----------
+    bucket_name : str
+        The name of the bucket in the cloud storage.
+    credentials : dict
+        The credentials required to authenticate with the cloud storage. It must contain 'apikey' and 'service_instance_id'.
+    hostname : str, optional
+    """
+
+    def __init__(
+        self,
+        bucket_name: str,
+        credentials: dict,
+        hostname: str = "https://s3.us-south.cloud-object-storage.appdomain.cloud",
+        readers: Optional[Dict[str, BaseReader]] = None,
+    ):
+        self.bucket_name = bucket_name
+        self.credentials = credentials
+        self.hostname = hostname
+        self._available_readers = readers if readers else {}
+        self._base_url = f"{self.hostname}/{self.bucket_name}"
+        if "apikey" in self.credentials and "service_instance_id" in self.credentials:
+            self.credentials = credentials
+        else:
+            raise ValueError(
+                "Missing 'apikey' or 'service_instance_id' in credentials."
+            )
+        self._bearer_token = self.__get_bearer_token()
+
+    async def load_data(
+        self,
+        regex_filter: str = None,
+        num_files: int = None,
+    ) -> List[Document]:
+        async def consume_generator():
+            return [
+                doc
+                async for doc in self.async_load_data(
+                    regex_filter=regex_filter, num_files=num_files
+                )
+            ]
+
+        return await consume_generator()
+
+    async def async_load_data(
+        self, regex_filter: str = None, num_files: int = None
+    ) -> AsyncGenerator:
+        file_names = self.list_files(regex_filter)
+        read_tasks = [
+            self.read_file_to_documents(file_name)
+            for file_name in file_names[:num_files]
+        ]
+        for read_task in asyncio.as_completed(read_tasks):
+            docs = await read_task
+            for doc in docs:
+                yield doc
+
+    async def read_file_to_documents(self, file_name: str) -> List[Document]:
+        file_data = await self.__read_file_data(file_name)
+        reader = self.__get_file_reader(file_name)
+        file_extension = "." + file_name.split(".")[-1]
+        with tempfile.NamedTemporaryFile(
+            delete=True, suffix=file_extension
+        ) as temp_file:
+            temp_file.write(file_data)
+            temp_file.flush()
+            try:
+                logger.info(f"Reading file {file_name}...")
+                docs = reader.load_data(temp_file.name)
+                for subdoc in docs:
+                    subdoc.metadata["filename"] = file_name
+            except Exception as e:
+                logger.error(f"Failed to read {file_name} with {reader} because of {e}")
+                docs = []
+
+        return docs
+
+    def list_files(self, regex_filter: str = None) -> List[str]:
+        """
+        Lists all the files in the bucket.
+
+        This method sends a GET request to the cloud storage service and parses the response to extract the file names.
+
+        Returns
+        -------
+        list
+            A list of file names.
+        """
+
+        @self.__refresh_token_on_exception
+        def _list_files(regex_filter: str = None) -> List[str]:
+            headers = self.__get_request_header()
+            response = requests.request("GET", self._base_url, headers=headers)
+            data = response.text
+            file_names = re.findall(r"<Key>(.*?)</Key>", data)
+            if regex_filter:
+                regex = re.compile(regex_filter)
+                filtered_file_names = [name for name in file_names if regex.match(name)]
+                file_names = filtered_file_names
+            return file_names
+
+        return _list_files(regex_filter)
+
+    async def __read_file_data(self, file_name: str) -> bytes:
+        """
+        Reads a file from the bucket.
+
+        This method sends a GET request to the cloud storage service to read the content of the specified file.
+
+        Parameters
+        ----------
+        file_name : str
+            The name of the file to read.
+
+        Returns
+        -------
+        bytes
+            The content of the file.
+        """
+
+        @self.__refresh_token_on_exception
+        async def _read_file_data() -> bytes:
+            headers = self.__get_request_header()
+            url = f"{self._base_url}/{file_name}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as response:
+                    data = await response.read()
+                    return data
+
+        return await _read_file_data()
+
+    @classmethod
+    def from_service_credentials(
+        cls,
+        bucket: str,
+        service_credentials_path: Path,
+        hostname: str = "https://s3.us-south.cloud-object-storage.appdomain.cloud",
+    ) -> "CloudObjectStorageReader":
+        with open(service_credentials_path, "r") as file:
+            cos_auth_dict = json.load(file)
+        credentials = {
+            "apikey": cos_auth_dict["apikey"],
+            "service_instance_id": cos_auth_dict["resource_instance_id"],
+        }
+        return cls(bucket_name=bucket, credentials=credentials, hostname=hostname)
+
+    def __get_file_reader(self, file_name: str) -> BaseReader:
+        file_extension = "." + file_name.split(".")[-1].lower()
+        reader_class_name = DEFAULT_READER_NAMES.get(file_extension)
+
+        if reader_class_name is None:
+            raise ValueError(f"No reader available for file extension {file_extension}")
+
+        if file_extension not in self._available_readers:
+            logger.info(f"Downloading reader {reader_class_name}...")
+            reader = download_loader(reader_class_name)()
+            self._available_readers[file_extension] = reader
+
+        return self._available_readers[file_extension]
+
+    def __get_request_header(self) -> Dict[str, str]:
+        headers = {
+            "ibm-service-instance-id": self.credentials["service_instance_id"],
+            "Authorization": f"Bearer {self._bearer_token}",
+        }
+        return headers
+
+    def __get_bearer_token(self) -> str:
+        url = "https://iam.cloud.ibm.com/identity/token"
+        payload = f"grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey={self.credentials['apikey']}"
+        headers = {
+            "content-type": "application/x-www-form-urlencoded",
+            "accept": "application/json",
+        }
+        response = requests.request("POST", url, headers=headers, data=payload)
+        bearer_token = response.json()["access_token"]
+        return bearer_token
+
+    def __refresh_token_on_exception(self, func):
+        def wrapper(*args, **kwargs):
+            for _ in range(2):
+                try:
+                    return func(*args, **kwargs)
+                except requests.exceptions.RequestException:
+                    self._bearer_token = self.__get_bearer_token()
+            raise
+
+        return wrapper
+
 
 class ElserElasticsearchStore(ElasticsearchStore):
     """Elasticsearch vector store."""

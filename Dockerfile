@@ -1,20 +1,23 @@
-FROM registry.access.redhat.com/ubi8/python-311:latest
+# Use the official Selenium Standalone Chrome image as the base image
+FROM python:slim
 
-WORKDIR /deployment
+# Switch to root user for installation
+USER root
 
-COPY app.py /deployment
-COPY templates/* /deployment/templates/
-COPY requirements.txt /deployment
-COPY tls.crt /deployment
-COPY .env /deployment
-COPY promptJSON /deployment
-COPY promptSQL /deployment
-COPY db2jcc4.jar /deployment
+# Install necessary packages and dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip
 
-RUN pip3 install -r requirements.txt
-USER 0
-RUN yum install -y java-1.8.0-openjdk.x86_64
+# Set the working directory inside the container
+WORKDIR /app
 
-EXPOSE 5000
+# Copy the requirements file to the container and install dependencies
+COPY requirements.txt requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-CMD [ "python3", "-m" , "flask", "run", "--host=0.0.0.0"]
+# Copy your FastAPI Python script to the container
+COPY . .
+
+# Set the command to run your Python script
+CMD ["python3", "main.py"]
