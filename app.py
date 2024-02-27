@@ -1,11 +1,11 @@
 import json
 import os, getpass
 import pandas as pd
-import jaydebeapi
 import uvicorn
 import sys
 import utils
 
+from utils import ElserElasticsearchStore, CloudObjectStorageReader
 from dotenv import load_dotenv
 # IBM COS
 import ibm_boto3
@@ -95,7 +95,10 @@ async def ingestDocs():
         config=Config(signature_version="oauth"),
         endpoint_url="https://s3.us-south.cloud-object-storage.appdomain.cloud"
     )
-    files = cos.Bucket(os.environ.get("BUCKET_NAME")).objects.all()
+    ibm_api_key_id=os.environ.get("COS_IBM_CLOUD_API_KEY")
+    print("IBM API KEY: " +str(ibm_api_key_id))
+
+    files = cos.Bucket("celonis").objects.all()
     print(files)
     cos_reader = utils.CloudObjectStorageReader(
         bucket_name = os.environ.get("BUCKET_NAME"),
@@ -119,6 +122,12 @@ async def ingestDocs():
     )
     nodes = ingestion_pipeline.run(documents=documents)
     nodes[0]
+
+    for node in nodes:
+        node.metadata["url"] = "https://ibm.box.com"
+    print(f"Total Nodes: {len(nodes)}\nExample node:\n{nodes[0]}")
+
+
 
     async_es_client = AsyncElasticsearch(
             wxd_creds["wxdurl"],
@@ -178,17 +187,19 @@ async def ingestDocs():
     }
     await create_index(async_es_client, "index-created-in-watson-studio-notebook", index_config)
     await create_inference_pipeline(async_es_client, "pipeline-created-in-watson-studio-notebook", pipeline_config)
-    # vector_store = ElserElasticsearchStore(
-    #     es_client=async_es_client,
-    #     index_name=os.environ.get("ES_INDEX_NAME"),
-    #     pipeline_name=os.environ.get("ES_PIPELINE_NAME"),
-    #     model_id=os.environ.get("EMBEDDING_MODEL_NAME"),
-    #     text_field=os.environ.get("INDEX_TEXT_FIELD"),
-    #     batch_size=10
-    # )
-    # added_node_ids = vector_store.async_add(nodes)
-    # print("added node ids: " + str(added_node_ids))
-    #print(f"Added {len(added_node_ids)} nodes to index {INDEX_NAME} using pipeline {PIPELINE_NAME}")
+    
+    vector_store = ElserElasticsearchStore(
+         es_client=async_es_client,
+         index_name=os.environ.get("INDEX_NAME"),
+         pipeline_name=os.environ.get("PIPELINE_NAME"),
+         model_id=os.environ.get("EMBEDDING_MODEL_NAME"),
+         text_field=os.environ.get("INDEX_TEXT_FIELD"),
+         batch_size=10
+    )
+    added_node_ids = await vector_store.async_add(nodes)
+
+    print("added node ids: " + str(added_node_ids))
+    #print(f"Added {len(added_node_ids)} nodes to index index-created-in-watson-studio-notebook using pipeline pipeline-created-in-watson-studio-notebook")
 
     return {"success":"true"}
 
