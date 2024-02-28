@@ -1,23 +1,18 @@
 # Use the official Selenium Standalone Chrome image as the base image
-FROM python:slim
-
-# Switch to root user for installation
-USER root
-
-# Install necessary packages and dependencies
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip
+FROM registry.access.redhat.com/ubi8/python-311:latest
 
 # Set the working directory inside the container
 WORKDIR /app
 
 # Copy the requirements file to the container and install dependencies
-COPY requirements.txt requirements.txt
-RUN pip3 install --no-cache-dir -r requirements.txt
+COPY requirements.txt /app/requirements.txt
+USER 0
+RUN pip3 install  -r requirements.txt
 
 # Copy your FastAPI Python script to the container
 COPY . .
 
+EXPOSE 5000
+
 # Set the command to run your Python script
-CMD ["python3", "main.py"]
+CMD ["python3", "app.py"]

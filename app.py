@@ -7,9 +7,6 @@ import utils
 
 from utils import ElserElasticsearchStore, CloudObjectStorageReader
 from dotenv import load_dotenv
-# IBM COS
-import ibm_boto3
-from ibm_botocore.client import Config, ClientError
 
 # Fast API
 from fastapi import FastAPI, Form, BackgroundTasks, UploadFile
@@ -23,6 +20,7 @@ from ibm_watson_machine_learning.foundation_models.utils.enums import ModelTypes
 # ElasticSearch
 from elasticsearch import AsyncElasticsearch
 from llama_index import ServiceContext, VectorStoreIndex, get_response_synthesizer, PromptTemplate
+from llama_index.vector_stores.types import MetadataFilters, ExactMatchFilter, FilterOperator, MetadataFilter
 
 # Vector Store / WatsonX connection
 from llama_index.llms import WatsonX
@@ -73,13 +71,6 @@ wml_credentials = {
     "apikey": os.environ.get("IBM_CLOUD_API_KEY")
 }
 
-generate_params = {
-    GenParams.MAX_NEW_TOKENS: 250,
-    GenParams.DECODING_METHOD: "greedy",
-    GenParams.STOP_SEQUENCES: ['END',';',';END'],
-    GenParams.REPETITION_PENALTY: 1
-}
-
 
 @app.get("/")
 def index():
@@ -87,19 +78,7 @@ def index():
 
 @app.post("/ingestDocs")
 async def ingestDocs():
-    # Create resource
-    cos = ibm_boto3.resource("s3",
-        ibm_api_key_id=os.environ.get("COS_IBM_CLOUD_API_KEY"),
-        ibm_service_instance_id=os.environ.get("COS_INSTANCE_ID"),
-        ibm_auth_endpoint="https://iam.cloud.ibm.com/identity/token",
-        config=Config(signature_version="oauth"),
-        endpoint_url="https://s3.us-south.cloud-object-storage.appdomain.cloud"
-    )
-    ibm_api_key_id=os.environ.get("COS_IBM_CLOUD_API_KEY")
-    print("IBM API KEY: " +str(ibm_api_key_id))
 
-    files = cos.Bucket("celonis").objects.all()
-    print(files)
     cos_reader = utils.CloudObjectStorageReader(
         bucket_name = os.environ.get("BUCKET_NAME"),
         credentials = {
@@ -241,6 +220,7 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
     es_model_name    = request.es_model_name
     num_results      = request.num_results
     llm_params       = request.llm_params
+    document         = request.document
 
     # Sets the llm instruction if the user provides it
     if not request.llm_instructions:
@@ -291,11 +271,27 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
         )
 
         # Create a retriever object using the index and setting params
-        retriever = VectorIndexRetriever(
-            index=index,
-            vector_store_query_mode="sparse",
-            similarity_top_k=num_results,
-        )
+        
+        if document: 
+            filters = MetadataFilters(
+                    filters=[
+                        MetadataFilter(
+                        key="filename", operator=FilterOperator.EQ, value=document
+                    ),
+                ]
+            )
+            retriever = VectorIndexRetriever(
+                index=index,
+                vector_store_query_mode="sparse",
+                similarity_top_k=num_results,
+                filters=filters,
+            )
+        else:
+            retriever = VectorIndexRetriever(
+                index=index,
+                vector_store_query_mode="sparse",
+                similarity_top_k=num_results
+            )
 
         # Create the watsonx LLM object that will be used for the RAG pattern
         llm = WatsonX(

@@ -40,4 +40,5 @@ class queryLLMRequest(BaseModel):
     es_model_name: Optional[str] = Field(default=".elser_model_1")
     num_results: Optional[str] = Field(default="5")
     llm_params: Optional[LLMParams] = LLMParams()
+    document: str
 

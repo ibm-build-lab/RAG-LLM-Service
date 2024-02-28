@@ -314,7 +314,6 @@ class ElserElasticsearchStore(ElasticsearchStore):
         Raises:
             Exception: If AsyncElasticsearch query fails.
         """
-
         es_query = {}
 
         if query.filters is not None and len(query.filters.legacy_filters()) > 0:
@@ -331,6 +330,7 @@ class ElserElasticsearchStore(ElasticsearchStore):
             and query.query_embedding is not None
         ):
             query_embedding = cast(List[float], query.query_embedding)
+
             es_query["knn"] = {
                 "filter": filter,
                 "field": self.vector_field,
@@ -338,7 +338,7 @@ class ElserElasticsearchStore(ElasticsearchStore):
                 "k": query.similarity_top_k,
                 "num_candidates": query.similarity_top_k * 10,
             }
-
+        
         if query.mode in (
             VectorStoreQueryMode.TEXT_SEARCH,
             VectorStoreQueryMode.HYBRID,
@@ -350,9 +350,19 @@ class ElserElasticsearchStore(ElasticsearchStore):
                 }
             }
         if query.mode == VectorStoreQueryMode.SPARSE:
-            es_query["text_expansion"] = {
-                "ml.tokens": {"model_id": self.model_id, "model_text": query.query_str}
-            }
+            if query.filters is not None:
+                es_query = {
+                    "bool": {
+                        "must": {"match": {self.text_field: {"query": query.query_str}}},
+                        "filter": filter,
+                    }
+                }
+            else:
+                es_query = {
+                    "bool": {
+                        "must": {"match": {self.text_field: {"query": query.query_str}}}
+                    }
+                }
 
         if query.mode == VectorStoreQueryMode.HYBRID:
             es_query["rank"] = {"rrf": {}}
@@ -389,6 +399,8 @@ class ElserElasticsearchStore(ElasticsearchStore):
 
         if use_llama_similarities:
             top_k_scores = _to_llama_similarities(top_k_scores)
+
+        print(es_query)
 
         return VectorStoreQueryResult(
             nodes=top_k_nodes,
