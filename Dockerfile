@@ -7,7 +7,7 @@ WORKDIR /app
 # Copy the requirements file to the container and install dependencies
 COPY requirements.txt /app/requirements.txt
 USER 0
-RUN pip3 install  -r requirements.txt
+RUN pip3 install -r requirements.txt
 
 # Copy your FastAPI Python script to the container
 COPY . .

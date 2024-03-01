@@ -8,24 +8,35 @@ from typing import (
     Union,
     cast,
     AsyncGenerator,
+    Sequence
 )
 from pathlib import Path
 
-from llama_index.vector_stores.elasticsearch import (
-    ElasticsearchStore,
-    _to_elasticsearch_filter,
-    _to_llama_similarities,
-)
-from llama_index import download_loader
-from llama_index.schema import BaseNode, Document, MetadataMode, TextNode
-from llama_index.readers.base import BaseReader
+from ibm_watson_machine_learning.foundation_models.model import Model
+from ibm_watson_machine_learning.foundation_models.utils.enums import ModelTypes
 
-from llama_index.vector_stores.types import (
-    VectorStoreQuery,
-    VectorStoreQueryMode,
-    VectorStoreQueryResult,
+from llama_index.core.readers.base import BaseReader
+from llama_index.core.schema import Document, NodeWithScore, TextNode
+from llama_index.core.vector_stores import VectorStoreQuery
+from llama_index.core.vector_stores.types import VectorStoreQueryMode
+from llama_index.core.llms import (
+    ChatMessage,
+    ChatResponse,
+    CompletionResponse,
+    ChatResponseAsyncGen,
+    CompletionResponseAsyncGen,
+    LLMMetadata,
 )
-from llama_index.vector_stores.utils import metadata_dict_to_node, node_to_metadata_dict
+from llama_index.core.callbacks import CallbackManager
+from llama_index.core.types import BaseOutputParser, PydanticProgramMode
+from llama_index.llms.watsonx import WatsonX
+from llama_index.readers.file import (
+    DocxReader,
+    PDFReader,
+    UnstructuredReader,
+    FlatReader,
+    HTMLTagReader
+)
 
 import requests
 import re
@@ -35,46 +46,8 @@ import logging
 import tempfile
 
 
-# def detect_and_process_hallucination(
-#     llm_response,
-#     reference_nodes,
-#     max_overlap_threshold=from_parameter_set[
-#         "hallucination_threshold_max_text_overlap"
-#     ],
-#     concatenated_overlap_threshold=from_parameter_set[
-#         "hallucination_threshold_concatenated_text_overlap"
-#     ],
-# ):
-#     context = [
-#         {
-#             "document_title": node.node.metadata["filename"],
-#             "document_text": node.node.text,
-#         }
-#         for node in reference_nodes
-#     ]
-#     max_overlap_score, concatenated_overlap_score = utils.get_overlap_scores(
-#         llm_response, context
-#     )
-#     is_hallucination = (
-#         max_overlap_score < max_overlap_threshold
-#         or concatenated_overlap_score < concatenated_overlap_threshold
-#     )
-#     if is_hallucination:
-#         hallucination_prefix = "WARNING: Given the low max/concatenated text overlap score, LLM response may contain hallucinations. "
-#         llm_response = f"{hallucination_prefix}{llm_response}"
-
-#     return llm_response, max_overlap_score, concatenated_overlap_score
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-DEFAULT_READER_NAMES = {
-    ".pdf": "PDFReader",
-    ".docx": "DocxReader",
-    ".pptx": "PptxReader",
-    ".txt": "UnstructuredReader",
-    ".html": "UnstructuredReader",
-}
 
 class CloudObjectStorageReader(BaseReader):
     """
@@ -114,6 +87,15 @@ class CloudObjectStorageReader(BaseReader):
                 "Missing 'apikey' or 'service_instance_id' in credentials."
             )
         self._bearer_token = self.__get_bearer_token()
+        self.readers = readers if readers else {}
+        DEFAULT_READERS = {
+            ".pdf": PDFReader(),
+            ".docx": DocxReader(),
+            ".pptx": UnstructuredReader(),
+            ".txt": FlatReader(),
+            ".html": HTMLTagReader(),
+        }
+        self.readers = {**DEFAULT_READERS, **self.readers}
 
     async def load_data(
         self,
@@ -147,6 +129,7 @@ class CloudObjectStorageReader(BaseReader):
         file_data = await self.__read_file_data(file_name)
         reader = self.__get_file_reader(file_name)
         file_extension = "." + file_name.split(".")[-1]
+
         with tempfile.NamedTemporaryFile(
             delete=True, suffix=file_extension
         ) as temp_file:
@@ -154,14 +137,30 @@ class CloudObjectStorageReader(BaseReader):
             temp_file.flush()
             try:
                 logger.info(f"Reading file {file_name}...")
-                docs = reader.load_data(temp_file.name)
-                for subdoc in docs:
-                    subdoc.metadata["filename"] = file_name
-            except Exception as e:
-                logger.error(f"Failed to read {file_name} with {reader} because of {e}")
+                docs: List[Document]
+                docs = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        reader.load_data,
+                        Path(temp_file.name),
+                        extra_info={"file_name": file_name},
+                    ),
+                    timeout=120.0,
+                )
+                logger.info(
+                    f"Finished reading file {file_name} with {reader.__class__.__name__}"
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Timeout when reading {file_name} with {reader.__class__.__name__}"
+                )
                 docs = []
-
+            except Exception as e:
+                logger.error(
+                    f"Failed to read {file_name} with {reader.__class__.__name__} because of {e}"
+                )
+                docs = []
         return docs
+
 
     def list_files(self, regex_filter: str = None) -> List[str]:
         """
@@ -234,17 +233,11 @@ class CloudObjectStorageReader(BaseReader):
 
     def __get_file_reader(self, file_name: str) -> BaseReader:
         file_extension = "." + file_name.split(".")[-1].lower()
-        reader_class_name = DEFAULT_READER_NAMES.get(file_extension)
-
-        if reader_class_name is None:
-            raise ValueError(f"No reader available for file extension {file_extension}")
-
-        if file_extension not in self._available_readers:
-            logger.info(f"Downloading reader {reader_class_name}...")
-            reader = download_loader(reader_class_name)()
-            self._available_readers[file_extension] = reader
-
-        return self._available_readers[file_extension]
+        if file_extension not in self.readers:
+            raise ValueError(
+                f"File extension {file_extension} is not supported by default readers and appropriate reader was not passed in the constructor."
+            )
+        return self.readers[file_extension]
 
     def __get_request_header(self) -> Dict[str, str]:
         headers = {
@@ -275,327 +268,115 @@ class CloudObjectStorageReader(BaseReader):
 
         return wrapper
 
+class CustomWatsonX(WatsonX):
+    """
+    IBM WatsonX LLM. Wrapper around the existing WatonX LLM module to provide following features:
+    1. Support for dynamically updated WatsonX models. The supported models are hardcoded in original implementation and are outdated as of 2/19/24.
+    2. Implements the Async methods for the WatsonX LLM. While these are not true async methods, the implementation allows it to be used in async context.
+    """
 
-class ElserElasticsearchStore(ElasticsearchStore):
-    """Elasticsearch vector store."""
-
-    model_id: Optional[str] = None
-    pipeline_name: Optional[str] = None
-
-    def __init__(self, *args, **kwargs):
-        pipeline_name = kwargs.pop("pipeline_name", None)
-        model_id = kwargs.pop("model_id", None)
-        super().__init__(*args, **kwargs)
-        self.pipeline_name = pipeline_name
-        self.model_id = model_id
-
-    async def aquery(
+    def __init__(
         self,
-        query: VectorStoreQuery,
-        custom_query: Optional[
-            Callable[[Dict, Union[VectorStoreQuery, None]], Dict]
-        ] = None,
-        es_filter: Optional[List[Dict]] = None,
-        use_llama_similarities: bool = False,
-        **kwargs: Any,
-    ) -> VectorStoreQueryResult:
-        """Asynchronous query index for top k most similar nodes.
-        Args:
-            query_embedding (VectorStoreQuery): query embedding
-            custom_query: Optional. custom query function that takes in the es query
-                        body and returns a modified query body.
-                        This can be used to add additional query
-                        parameters to the AsyncElasticsearch query.
-            es_filter: Optional. AsyncElasticsearch filter to apply to the
-                        query. If filter is provided in the query,
-                        this filter will be ignored.
-        Returns:
-            VectorStoreQueryResult: Result of the query.
-        Raises:
-            Exception: If AsyncElasticsearch query fails.
-        """
-        es_query = {}
-
-        if query.filters is not None and len(query.filters.legacy_filters()) > 0:
-            filter = [_to_elasticsearch_filter(query.filters)]
-        else:
-            filter = es_filter or []
-
-        if (
-            query.mode
-            in (
-                VectorStoreQueryMode.DEFAULT,
-                VectorStoreQueryMode.HYBRID,
-            )
-            and query.query_embedding is not None
-        ):
-            query_embedding = cast(List[float], query.query_embedding)
-
-            es_query["knn"] = {
-                "filter": filter,
-                "field": self.vector_field,
-                "query_vector": query_embedding,
-                "k": query.similarity_top_k,
-                "num_candidates": query.similarity_top_k * 10,
-            }
-        
-        if query.mode in (
-            VectorStoreQueryMode.TEXT_SEARCH,
-            VectorStoreQueryMode.HYBRID,
-        ):
-            es_query["query"] = {
-                "bool": {
-                    "must": {"match": {self.text_field: {"query": query.query_str}}},
-                    "filter": filter,
-                }
-            }
-        if query.mode == VectorStoreQueryMode.SPARSE:
-            if query.filters is not None:
-                es_query = {
-                    "bool": {
-                        "must": {"match": {self.text_field: {"query": query.query_str}}},
-                        "filter": filter,
-                    }
-                }
-            else:
-                es_query = {
-                    "bool": {
-                        "must": {"match": {self.text_field: {"query": query.query_str}}}
-                    }
-                }
-
-        if query.mode == VectorStoreQueryMode.HYBRID:
-            es_query["rank"] = {"rrf": {}}
-
-        if custom_query is not None:
-            es_query = custom_query(es_query, query)
-            logger.debug(f"Calling custom_query, Query body now: {es_query}")
-        async with self.client as client:
-            response = await client.search(
-                index=self.index_name,
-                query=es_query,
-                size=query.similarity_top_k,
-                _source={"excludes": [self.vector_field]},
-            )
-
-        top_k_nodes = []
-        top_k_ids = []
-        top_k_scores = []
-        hits = response["hits"]["hits"]
-        for hit in hits:
-            source = hit["_source"]
-            metadata = source.get("metadata", None)
-            text = source.get(self.text_field, None)
-            node_id = hit["_id"]
-            node = metadata_dict_to_node(metadata)
-            node.text = text
-            top_k_nodes.append(node)
-            top_k_ids.append(node_id)
-            top_k_scores.append(hit.get("_rank", hit["_score"]))
-
-        if query.mode == VectorStoreQueryMode.HYBRID:
-            total_rank = sum(top_k_scores)
-            top_k_scores = [total_rank - rank / total_rank for rank in top_k_scores]
-
-        if use_llama_similarities:
-            top_k_scores = _to_llama_similarities(top_k_scores)
-
-        print(es_query)
-
-        return VectorStoreQueryResult(
-            nodes=top_k_nodes,
-            ids=top_k_ids,
-            similarities=top_k_scores,
-        )
-
-    def add(
-        self,
-        nodes: List[BaseNode],
-        *,
-        create_index_if_not_exists: bool = True,
-        **add_kwargs: Any,
-    ) -> List[str]:
-        """Add nodes to Elasticsearch index.
-        Args:
-            nodes: List of nodes with embeddings.
-            create_index_if_not_exists: Optional. Whether to create
-                                        the Elasticsearch index if it
-                                        doesn't already exist.
-                                        Defaults to True.
-        Returns:
-            List of node IDs that were added to the index.
-        Raises:
-            ImportError: If elasticsearch['async'] python package is not installed.
-            BulkIndexError: If AsyncElasticsearch async_bulk indexing fails.
-        """
-        return asyncio.get_event_loop().run_until_complete(
-            self.async_add(nodes, create_index_if_not_exists=create_index_if_not_exists)
-        )
-
-    async def async_add(
-        self,
-        nodes: List[BaseNode],
-        *,
-        create_index_if_not_exists: bool = True,
-        create_pipeline_if_not_exists: bool = True,
-        **add_kwargs: Any,
-    ) -> List[str]:
-        """Asynchronous method to add nodes to Elasticsearch index.
-        Args:
-            nodes: List of nodes with embeddings.
-            create_index_if_not_exists: Optional. Whether to create
-                                        the AsyncElasticsearch index if it
-                                        doesn't already exist.
-                                        Defaults to True.
-        Returns:
-            List of node IDs that were added to the index.
-        Raises:
-            ImportError: If elasticsearch python package is not installed.
-            BulkIndexError: If AsyncElasticsearch async_bulk indexing fails.
-        """
-        try:
-            from elasticsearch.helpers import BulkIndexError, async_bulk
-        except ImportError:
-            raise ImportError(
-                "Could not import elasticsearch[async] python package. "
-                "Please install it with `pip install 'elasticsearch[async]'`."
-            )
-
-        if len(nodes) == 0:
-            return []
-
-        if create_index_if_not_exists:
-            try:
-                dims_length = len(nodes[0].get_embedding())
-            except ValueError:
-                dims_length = None
-            await self._create_index_if_not_exists(
-                index_name=self.index_name, dims_length=dims_length
-            )
-
-        if create_pipeline_if_not_exists:
-            await self._create_pipeline_if_not_exists()
-
-        requests = []
-        return_ids = []
-        for node in nodes:
-            _id = node.node_id if node.node_id else str(uuid.uuid4())
-            request = {
-                "_op_type": "index",
-                "_index": self.index_name,
-                "_id": _id,
-                "_source": self.__format_node_to_elastic_document(node),
-                "pipeline": self.pipeline_name,
-            }
-            requests.append(request)
-            return_ids.append(_id)
-        try:
-            success, failed = await async_bulk(
-                self.client, requests, chunk_size=self.batch_size, refresh=True
-            )
-            logger.debug(f"Added {success} and failed to add {failed} texts to index")
-
-            logger.debug(f"added texts {return_ids} to index")
-            return return_ids
-        except BulkIndexError as e:
-            logger.error(f"Error adding texts: {e}")
-            firstError = e.errors[0].get("index", {}).get("error", {})
-            logger.error(f"First error reason: {firstError.get('reason')}")
-            raise
-
-    async def _create_pipeline_if_not_exists(self) -> None:
-        try:
-            await self.client.ingest.get_pipeline(id=self.pipeline_name)
-            logger.debug(
-                f"Pipeline {self.pipeline_name} already exists. Skipping creation."
-            )
-        except NotFoundError:
-            pipeline_settings = {
-                "description": "Inference pipeline using ELSER model",
-                "processors": [
-                    {
-                        "inference": {
-                            "field_map": {self.text_field: "text_field"},
-                            "model_id": self.model_id,
-                            "target_field": "ml",
-                            "inference_config": {
-                                "text_expansion": {"results_field": "tokens"}
-                            },
-                        }
-                    }
-                ],
-                "version": 1,
-            }
-            logger.debug(
-                f"Creating pipeline {self.pipeline_name} that uses ELSER model"
-            )
-            await self.client.ingest.put_pipeline(
-                id=self.pipeline_name, body=pipeline_settings
-            )
-
-    async def _create_index_if_not_exists(
-        self, index_name: str, dims_length: Optional[int] = None
+        credentials: Dict[str, Any],
+        model_id: Optional[str] = "ibm/mpt-7b-instruct2",
+        validate_model_id: bool = True,
+        project_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+        max_new_tokens: Optional[int] = 512,
+        temperature: Optional[float] = 0.1,
+        additional_kwargs: Optional[Dict[str, Any]] = None,
+        callback_manager: Optional[CallbackManager] = None,
+        system_prompt: Optional[str] = None,
+        messages_to_prompt: Optional[Callable[[Sequence[ChatMessage]], str]] = None,
+        completion_to_prompt: Optional[Callable[[str], str]] = None,
+        pydantic_program_mode: PydanticProgramMode = PydanticProgramMode.DEFAULT,
+        output_parser: Optional[BaseOutputParser] = None,
     ) -> None:
-        """Create the AsyncElasticsearch index if it doesn't already exist.
-        Args:
-            index_name: Name of the AsyncElasticsearch index to create.
-            dims_length: Length of the embedding vectors.
-        """
-        if await self.client.indices.exists(index=index_name):
-            logger.debug(f"Index {index_name} already exists. Skipping creation.")
+        super().__init__(
+            credentials=credentials,
+            model_id="meta-llama/llama-2-70b-chat",
+            project_id=project_id,
+            space_id=space_id,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            additional_kwargs=additional_kwargs,
+            callback_manager=callback_manager,
+            system_prompt=system_prompt,
+            messages_to_prompt=messages_to_prompt,
+            completion_to_prompt=completion_to_prompt,
+            pydantic_program_mode=pydantic_program_mode,
+            output_parser=output_parser,
+        )
+        if validate_model_id:
+            supported_models = [model.value for model in ModelTypes]
+            if model_id not in supported_models:
+                raise ValueError(
+                    f"Model name {model_id} not found in {supported_models}"
+                )
+        self.model_id = model_id
+        self._model = Model(
+            model_id=model_id,
+            credentials=credentials,
+            project_id=project_id,
+            space_id=space_id,
+        )
+        self.model_info = self._model.get_details()
 
-        else:
-            if dims_length is None:
-                logger.info("Using ELSER model since dims_length is None")
-                index_settings = {
-                    "mappings": {
-                        "properties": {
-                            "ml.tokens": {"type": "rank_features"},
-                            self.text_field: {"type": "text"},
-                        }
+    @classmethod
+    def class_name(self) -> str:
+        """Get Class Name."""
+        return "CustomWatsonX_LLM"
+
+    @property
+    def metadata(self) -> LLMMetadata:
+        return LLMMetadata(
+            context_window=self.model_info["model_limits"]["max_sequence_length"],
+            num_output=self.max_new_tokens,
+            model_name=self.model_id,
+        )
+
+    async def acomplete(
+        self, prompt: str, formatted: bool = False, **kwargs: Any
+    ) -> CompletionResponse:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, self.complete, prompt, formatted, **kwargs
+        )
+
+    async def achat(
+        self, messages: Sequence[ChatMessage], **kwargs: Any
+    ) -> ChatResponse:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.chat, messages, **kwargs)
+
+    async def astream_chat(
+        self, messages: Sequence[ChatMessage], **kwargs: Any
+    ) -> ChatResponseAsyncGen:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.stream_chat, messages, **kwargs)
+
+    async def astream_complete(
+        self, prompt: str, formatted: bool = False, **kwargs: Any
+    ) -> CompletionResponseAsyncGen:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, self.stream_complete, prompt, formatted, **kwargs
+        )
+
+def create_sparse_vector_query_with_model(
+    model_id: str, model_text_field: str = "ml.tokens"
+) -> Callable[[Dict, VectorStoreQuery], Dict]:
+    def sparse_vector_query(existing_query: Dict, query: VectorStoreQuery) -> Dict:
+        new_query = existing_query.copy()
+        if query.mode in [VectorStoreQueryMode.SPARSE, VectorStoreQueryMode.HYBRID]:
+            new_query["query"] = {
+                "text_expansion": {
+                    model_text_field: {
+                        "model_id": model_id,
+                        "model_text": query.query_str,
                     }
                 }
-            else:
-                if self.distance_strategy == "COSINE":
-                    similarityAlgo = "cosine"
-                elif self.distance_strategy == "EUCLIDEAN_DISTANCE":
-                    similarityAlgo = "l2_norm"
-                elif self.distance_strategy == "DOT_PRODUCT":
-                    similarityAlgo = "dot_product"
-                else:
-                    raise ValueError(
-                        f"Similarity {self.distance_strategy} not supported."
-                    )
+            }
+        return new_query
 
-                index_settings = {
-                    "mappings": {
-                        "properties": {
-                            self.vector_field: {
-                                "type": "dense_vector",
-                                "dims": dims_length,
-                                "index": True,
-                                "similarity": similarityAlgo,
-                            },
-                            self.text_field: {"type": "text"},
-                            "metadata": {
-                                "properties": {
-                                    "document_id": {"type": "keyword"},
-                                    "doc_id": {"type": "keyword"},
-                                    "ref_doc_id": {"type": "keyword"},
-                                }
-                            },
-                        }
-                    }
-                }
-
-            logger.debug(
-                f"Creating index {index_name} with mappings {index_settings['mappings']}"
-            )
-            await self.client.indices.create(index=index_name, **index_settings)
-
-    def __format_node_to_elastic_document(self, node: TextNode):
-        elastic_doc = {
-            self.text_field: node.get_content(metadata_mode=MetadataMode.NONE),
-            "metadata": node_to_metadata_dict(node, remove_text=True),
-        }
-        return elastic_doc
+    return sparse_vector_query
