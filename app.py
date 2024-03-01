@@ -231,89 +231,89 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
     }
 
     # Attempt to connect to ElasticSearch and call Watsonx for a response
-    try:
-        # Setting up the structure of the payload for the query engine
-        user_query = payload["input_data"][0]["values"][0][0]
+    # try:
+    # Setting up the structure of the payload for the query engine
+    user_query = payload["input_data"][0]["values"][0][0]
 
-        # Create the prompt template based on llm_instructions
-        prompt_template = PromptTemplate(llm_instructions)
+    # Create the prompt template based on llm_instructions
+    prompt_template = PromptTemplate(llm_instructions)
 
-        # Create the watsonx LLM object that will be used for the RAG pattern
-        Settings.llm = CustomWatsonX(
-            credentials=wml_credentials,
-            project_id=project_id,
-            model_id=llm_params.model_id,
-            validate_model_id=False,
-            additional_kwargs=llm_params.parameters.dict(),
+    # Create the watsonx LLM object that will be used for the RAG pattern
+    Settings.llm = CustomWatsonX(
+        credentials=wml_credentials,
+        project_id=project_id,
+        model_id=llm_params.model_id,
+        validate_model_id=False,
+        additional_kwargs=llm_params.parameters.dict(),
+    )
+    Settings.embed_model = None
+
+    # Create a client connection to elastic search
+    async_es_client = AsyncElasticsearch(
+        wxd_creds["wxdurl"],
+        basic_auth=(wxd_creds["username"], wxd_creds["password"]),
+        verify_certs=False,
+        request_timeout=3600,
+    )
+
+    # Create a vector store using the elastic client
+    vector_store = ElasticsearchStore(
+        es_client=async_es_client,
+        index_name=index_name,
+        text_field=index_text_field
+    )
+
+    # Retrieve an index of the ingested documents in the vector store
+    # for later retrieval and querying
+    index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
+
+    # Create a retriever object using the index and setting params
+
+    if es_filters: 
+        print(es_filters)
+        for k, v in es_filters.items():
+            print(k)
+            print(v)
+        filters = MetadataFilters(
+                filters=[
+                    MetadataFilter(key=k,operator=FilterOperator.EQ, value=v) for k, v in es_filters.items()
+            ]
         )
-        Settings.embed_model = None
-
-        # Create a client connection to elastic search
-        async_es_client = AsyncElasticsearch(
-            wxd_creds["wxdurl"],
-            basic_auth=(wxd_creds["username"], wxd_creds["password"]),
-            verify_certs=False,
-            request_timeout=3600,
+        
+        query_engine = index.as_query_engine(
+            text_qa_template=prompt_template,
+            similarity_top_k=num_results,
+            vector_store_query_mode="sparse",
+            vector_store_kwargs={
+                "custom_query": create_sparse_vector_query_with_model_and_filter(es_model_name, filters=filters)
+            },
+        )
+    else:
+        query_engine = index.as_query_engine(
+            text_qa_template=prompt_template,
+            similarity_top_k=num_results,
+            vector_store_query_mode="sparse",
+            vector_store_kwargs={
+                "custom_query": create_sparse_vector_query_with_model(es_model_name)
+            },
         )
 
-        # Create a vector store using the elastic client
-        vector_store = ElasticsearchStore(
-            es_client=async_es_client,
-            index_name=index_name,
-            text_field=index_text_field
-        )
+    # Finally query the engine with the user question
+    response = query_engine.query(user_query)
 
-        # Retrieve an index of the ingested documents in the vector store
-        # for later retrieval and querying
-        index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
+    # Format the data
+    data_response = {
+        "llm_response": response.response,
+        "references": [node.to_dict() for node in response.source_nodes]
+    }
 
-        # Create a retriever object using the index and setting params
+    return queryLLMResponse(**data_response)
 
-        if es_filters: 
-            print(es_filters)
-            for k, v in es_filters.items():
-                print(k)
-                print(v)
-            filters = MetadataFilters(
-                    filters=[
-                        MetadataFilter(key=k,operator=FilterOperator.EQ, value=v) for k, v in es_filters.items()
-                ]
-            )
-            
-            query_engine = index.as_query_engine(
-                text_qa_template=prompt_template,
-                similarity_top_k=num_results,
-                vector_store_query_mode="sparse",
-                vector_store_kwargs={
-                    "custom_query": create_sparse_vector_query_with_model_and_filter(es_model_name, filters=filters)
-                },
-            )
-        else:
-            query_engine = index.as_query_engine(
-                text_qa_template=prompt_template,
-                similarity_top_k=num_results,
-                vector_store_query_mode="sparse",
-                vector_store_kwargs={
-                    "custom_query": create_sparse_vector_query_with_model(es_model_name)
-                },
-            )
-
-        # Finally query the engine with the user question
-        response = query_engine.query(user_query)
-
-        # Format the data
-        data_response = {
-            "llm_response": response.response,
-            "references": [node.to_dict() for node in response.source_nodes]
-        }
-
-        return queryLLMResponse(**data_response)
-
-    except Exception as e:
-        return queryLLMResponse(
-            llm_response = "",
-            references=[{"error": repr(e)}]
-        )
+    # except Exception as e:
+    #     return queryLLMResponse(
+    #         llm_response = "",
+    #         references=[{"error": repr(e)}]
+    #     )
 
 
 if __name__ == '__main__':
