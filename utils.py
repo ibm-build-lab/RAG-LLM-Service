@@ -15,6 +15,7 @@ from pathlib import Path
 from ibm_watson_machine_learning.foundation_models.model import Model
 from ibm_watson_machine_learning.foundation_models.utils.enums import ModelTypes
 
+
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document, NodeWithScore, TextNode
 from llama_index.core.vector_stores import VectorStoreQuery
@@ -37,6 +38,7 @@ from llama_index.readers.file import (
     FlatReader,
     HTMLTagReader
 )
+from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter, FilterOperator, MetadataFilter
 
 import requests
 import re
@@ -380,3 +382,56 @@ def create_sparse_vector_query_with_model(
         return new_query
 
     return sparse_vector_query
+
+def create_sparse_vector_query_with_model_and_filter(
+    model_id: str, model_text_field: str = "ml.tokens", filters: Optional[List[Dict]] = None
+) -> Callable[[Dict, VectorStoreQuery], Dict]:
+    def sparse_vector_query(existing_query: Dict, query: VectorStoreQuery) -> Dict:
+        new_query = existing_query.copy()
+        if query.mode in [VectorStoreQueryMode.SPARSE, VectorStoreQueryMode.HYBRID]:
+            new_query["query"] = {
+                "bool": {
+                    "must": {
+                        "text_expansion": {
+                            model_text_field: {
+                                "model_id": model_id,
+                                "model_text": query.query_str,
+                            }
+                        } 
+                    },
+                    "filter": [_to_elasticsearch_filter(filters)],
+                }
+            }
+            print(new_query)
+        return new_query
+    return sparse_vector_query
+
+def _to_elasticsearch_filter(standard_filters: MetadataFilters) -> Dict[str, Any]:
+    """Convert standard filters to Elasticsearch filter.
+
+    Args:
+        standard_filters: Standard Llama-index filters.
+
+    Returns:
+        Elasticsearch filter.
+    """
+    if len(standard_filters.legacy_filters()) == 1:
+        filter = standard_filters.legacy_filters()[0]
+        return {
+            "term": {
+                f"metadata.{filter.key}.keyword": filter.value,
+                
+            }
+        }
+    else:
+        operands = []
+        for filter in standard_filters.legacy_filters():
+            operands.append(
+                {
+                    "term": {
+                        f"metadata.{filter.key}.keyword": filter.value
+                        
+                    }
+                }
+            )
+        return {"bool": {"must": operands}}

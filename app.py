@@ -5,7 +5,7 @@ import uvicorn
 import sys
 # import nest_asyncio
 
-from utils import CloudObjectStorageReader, CustomWatsonX, create_sparse_vector_query_with_model
+from utils import CloudObjectStorageReader, CustomWatsonX, create_sparse_vector_query_with_model, create_sparse_vector_query_with_model_and_filter
 from dotenv import load_dotenv
 
 # Fast API
@@ -26,6 +26,8 @@ from elasticsearch.exceptions import NotFoundError
 from llama_index.core import VectorStoreIndex, StorageContext, PromptTemplate, Settings
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.vector_stores.elasticsearch import ElasticsearchStore
+from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter, FilterOperator, MetadataFilter
+
 
 # Custom type classes
 from customTypes.ingestRequest import ingestRequest
@@ -266,38 +268,33 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
 
     # Create a retriever object using the index and setting params
     
-    # if document: 
-    #     filters = MetadataFilters(
-    #             filters=[
-    #                 MetadataFilter(
-    #                 key="filename", operator=FilterOperator.EQ, value=document
-    #             ),
-    #         ]
-    #     )
-    #     retriever = VectorIndexRetriever(
-    #         index=index,
-    #         vector_store_query_mode="sparse",
-    #         similarity_top_k=num_results,
-    #         filters=filters,
-    #     )
-    # else:
-    #     retriever = VectorIndexRetriever(
-    #         index=index,
-    #         vector_store_query_mode="sparse",
-    #         similarity_top_k=num_results
-    #     )
+    if document: 
+        filters = MetadataFilters(
+                filters=[
+                    MetadataFilter(
+                    key="filename", operator=FilterOperator.EQ, value=document
+                ),
+            ]
+        )
+        
+        query_engine = index.as_query_engine(
+            text_qa_template=prompt_template,
+            similarity_top_k=num_results,
+            vector_store_query_mode="sparse",
+            vector_store_kwargs={
+                "custom_query": create_sparse_vector_query_with_model_and_filter(es_model_name, filters=filters)
+            },
+        )
+    else:
+        query_engine = index.as_query_engine(
+            text_qa_template=prompt_template,
+            similarity_top_k=num_results,
+            vector_store_query_mode="sparse",
+            vector_store_kwargs={
+                "custom_query": create_sparse_vector_query_with_model(es_model_name)
+            },
+        )
 
-
-    # Create the query engine
-    query_engine = index.as_query_engine(
-        text_qa_template=prompt_template,
-        similarity_top_k=num_results,
-        vector_store_query_mode="sparse",
-        vector_store_kwargs={
-            "custom_query": create_sparse_vector_query_with_model(es_model_name)
-        },
-    )
-    
     # Finally query the engine with the user question
     response = query_engine.query(user_query)
 
