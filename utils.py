@@ -15,6 +15,7 @@ from pathlib import Path
 from ibm_watson_machine_learning.foundation_models.model import Model
 from ibm_watson_machine_learning.foundation_models.utils.enums import ModelTypes
 
+
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document, NodeWithScore, TextNode
 from llama_index.core.vector_stores import VectorStoreQuery
