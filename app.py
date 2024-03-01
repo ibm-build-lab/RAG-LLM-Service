@@ -32,8 +32,8 @@ from llama_index.node_parser import SentenceSplitter
 
 
 # Custom type classes
-# from customTypes.classificationRequest import classificationRequest
-# from customTypes.summarizationRequest import summarizationRequest
+from customTypes.ingestRequest import ingestRequest
+from customTypes.ingestResponse import ingestResponse
 from customTypes.queryLLMRequest import queryLLMRequest
 from customTypes.queryLLMResponse import queryLLMResponse
 
@@ -71,116 +71,143 @@ wml_credentials = {
     "apikey": os.environ.get("IBM_CLOUD_API_KEY")
 }
 
+# COS Creds
+cos_creds = {
+    "cosIBMApiKeyId": os.environ.get("COS_IBM_CLOUD_API_KEY"),
+    "cosServiceInstanceId": os.environ.get("COS_INSTANCE_ID"),
+    "cosEndpointURL": os.environ.get("COS_ENDPOINT_URL")
+}
+
+generate_params = {
+    GenParams.MAX_NEW_TOKENS: 250,
+    GenParams.DECODING_METHOD: "greedy",
+    GenParams.STOP_SEQUENCES: ['END',';',';END'],
+    GenParams.REPETITION_PENALTY: 1
+}
+
 
 @app.get("/")
 def index():
-    return {"Hello": "World1"}
+    return {"Hello": "World"}
 
 @app.post("/ingestDocs")
-async def ingestDocs():
+async def ingestDocs(request: ingestRequest)->ingestResponse:
+    cosBucketName   = request.bucket_name
+    chunkSize       = request.chunk_size
+    chunkOverlap    = request.chunk_overlap
+    esIndexName     = request.es_index_name
+    esPipelineName  = request.es_pipeline_name
+    esModelName     = request.es_model_name
+    esIndexTextField = request.es_index_text_field
+    # Metadata to add to nodes, could be anything from the user, maybe a list?
+    metadataFields    = request.metadata_fields
 
-    cos_reader = utils.CloudObjectStorageReader(
-        bucket_name = os.environ.get("BUCKET_NAME"),
-        credentials = {
-            "apikey": os.environ.get("COS_IBM_CLOUD_API_KEY"),
-            "service_instance_id": os.environ.get("COS_INSTANCE_ID")
-        },
-        hostname = "https://s3.us-south.cloud-object-storage.appdomain.cloud"
-    )
+    try: 
+        cos_reader = utils.CloudObjectStorageReader(
+            bucket_name = cosBucketName,
+            credentials = {
+                "apikey": cos_creds["cosIBMApiKeyId"],
+                "service_instance_id": cos_creds["cosServiceInstanceId"]
+            },
+            hostname = cos_creds["cosEndpointURL"]
+        )
 
-    print(cos_reader.list_files())
- 
-    documents = await cos_reader.load_data()
-    print(f"Total documents: {len(documents)}\nExample document:\n{documents[0]}")
-    ingestion_pipeline = IngestionPipeline(
-        transformations=[
-            SentenceSplitter.from_defaults(
-                chunk_size=512, chunk_overlap=256
-            ),
-        ]
-    )
-    nodes = ingestion_pipeline.run(documents=documents)
-    nodes[0]
-
-    for node in nodes:
-        node.metadata["url"] = "https://ibm.box.com"
-    print(f"Total Nodes: {len(nodes)}\nExample node:\n{nodes[0]}")
-
-
-
-    async_es_client = AsyncElasticsearch(
-            wxd_creds["wxdurl"],
-            basic_auth=(wxd_creds["username"], wxd_creds["password"]),
-            verify_certs=False,
-            request_timeout=3600,
-    )
-
-    await async_es_client.info()
+        print(cos_reader.list_files())
     
-    index_config = {
-        "mappings": {
-            "properties": {"ml.tokens": {"type": "rank_features"}, "body_content_field": {"type": "text"}}
+        documents = await cos_reader.load_data()
+        print(f"Total documents: {len(documents)}\nExample document:\n{documents[0]}")
+        ingestion_pipeline = IngestionPipeline(
+            transformations=[
+                SentenceSplitter.from_defaults(
+                    # chunk_size=512, chunk_overlap=256
+                    chunk_size=chunkSize,
+                    chunk_overlap=chunkOverlap
+                ),
+            ]
+        )
+        nodes = ingestion_pipeline.run(documents=documents)
+        nodes[0]
+
+        for node in nodes:
+            # Do some crazy stuff to pull metadata from user to place into here:
+            # for metadata in metadataDocs:
+            #   # TODO add metadata stuff
+            node.metadata["url"] = "https://ibm.box.com"
+        print(f"Total Nodes: {len(nodes)}\nExample node:\n{nodes[0]}")
+
+        async_es_client = AsyncElasticsearch(
+                wxd_creds["wxdurl"],
+                basic_auth=(wxd_creds["username"], wxd_creds["password"]),
+                verify_certs=False,
+                request_timeout=3600,
+        )
+
+        await async_es_client.info()
+        
+        index_config = {
+            "mappings": {
+                "properties": {"ml.tokens": {"type": "rank_features"}, "body_content_field": {"type": "text"}}
+            }
         }
-    }
-    
-    print( index_config)
-    
-    pipeline_config = {
-        "description": "Inference pipeline using elser model",
-        "processors": [
+                
+        pipeline_config = {
+            "description": "Inference pipeline using elser model",
+            "processors": [
+                {
+                    "inference": {
+                        "field_map": {"body_content_field": "text_field"},
+                        "model_id": ".elser_model_1",
+                        "target_field": "ml",
+                        "inference_config": {"text_expansion": {"results_field": "tokens"}},
+                    }
+                },
             {
-                "inference": {
-                    "field_map": {"body_content_field": "text_field"},
-                    "model_id": ".elser_model_1",
-                    "target_field": "ml",
-                    "inference_config": {"text_expansion": {"results_field": "tokens"}},
+                "set": {
+                    "field": "file_name",
+                    "value": "{{metadata.filename}}"
                 }
             },
-        {
-            "set": {
-                "field": "file_name",
-                "value": "{{metadata.filename}}"
-            }
-        },
-        {
-            "set": {
-                "field": "url",
-                "value": "{{metadata.url}}"
-            }
-        },
-        {
-            "append": {
-                "field": "_source._ingest.processors",
-                "value": [
-                        {
-                            "model_version": "10.0.0",
-                            "pipeline": "pipeline-created-in-watson-studio-notebook",
-                            "processed_timestamp": "{{{ _ingest.timestamp }}}",
-                            "types": ["pytorch", "text_expansion"],
-                        }
-                    ],
+            {
+                "set": {
+                    "field": "url",
+                    "value": "{{metadata.url}}"
                 }
             },
-        ],
-        "version": 1,
-    }
-    await create_index(async_es_client, "index-created-in-watson-studio-notebook", index_config)
-    await create_inference_pipeline(async_es_client, "pipeline-created-in-watson-studio-notebook", pipeline_config)
-    
-    vector_store = ElserElasticsearchStore(
-         es_client=async_es_client,
-         index_name=os.environ.get("INDEX_NAME"),
-         pipeline_name=os.environ.get("PIPELINE_NAME"),
-         model_id=os.environ.get("EMBEDDING_MODEL_NAME"),
-         text_field=os.environ.get("INDEX_TEXT_FIELD"),
-         batch_size=10
-    )
-    added_node_ids = await vector_store.async_add(nodes)
+            {
+                "append": {
+                    "field": "_source._ingest.processors",
+                    "value": [
+                            {
+                                "model_version": "10.0.0",
+                                "pipeline": "pipeline-created-in-watson-studio-notebook",
+                                "processed_timestamp": "{{{ _ingest.timestamp }}}",
+                                "types": ["pytorch", "text_expansion"],
+                            }
+                        ],
+                    }
+                },
+            ],
+            "version": 1,
+        }
 
-    print("added node ids: " + str(added_node_ids))
-    #print(f"Added {len(added_node_ids)} nodes to index index-created-in-watson-studio-notebook using pipeline pipeline-created-in-watson-studio-notebook")
+        await create_index(async_es_client, esIndexName, index_config)
+        await create_inference_pipeline(async_es_client, esPipelineName, pipeline_config)
+        
+        vector_store = ElserElasticsearchStore(
+            es_client=async_es_client,
+            index_name=esIndexName,
+            pipeline_name=esPipelineName,
+            model_id=esModelName,
+            text_field=esIndexTextField,
+            batch_size=10
+        )
+        added_node_ids = await vector_store.async_add(nodes)
 
-    return {"success":"true"}
+        print("added node ids: " + str(added_node_ids))
+
+        return ingestResponse(response="success")
+    except Exception as e:
+        return ingestResponse(response = json.dumps({"error": repr(e)}))
 
 
 async def create_index(client, index_name, index_settings):
@@ -333,8 +360,7 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
 
 @app.post("/getDocs")
 def getDocs():
-    
-    return ""
+    return {"Not":"Implemented yet"}
 
 @app.post("/watsonx")
 def watsonx(input, promptType, model):
@@ -373,11 +399,7 @@ def watsonx(input, promptType, model):
 
 @app.post("/setup_index")
 def setupIndex():
-    return ""
-
-def helpFunction():
-    print("hi")
-    return ""
+    return {"Not":"Implemented yet"}
 
 
 if __name__ == '__main__':
