@@ -272,7 +272,7 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
         filters = MetadataFilters(
                 filters=[
                     MetadataFilter(
-                    key="filename", operator=FilterOperator.EQ, value=document
+                    key="file_name", operator=FilterOperator.EQ, value=document
                 ),
             ]
         )
