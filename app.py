@@ -89,20 +89,20 @@ def index():
 
 @app.post("/ingestDocs")
 async def ingestDocs(request: ingestRequest)->ingestResponse:
-    cosBucketName   = request.bucket_name
-    chunkSize       = request.chunk_size
-    chunkOverlap    = request.chunk_overlap
-    esIndexName     = request.es_index_name
-    esPipelineName  = request.es_pipeline_name
-    esModelName     = request.es_model_name
-    esModelTextField = request.es_model_text_field
-    esIndexTextField = request.es_index_text_field
-    # Metadata to add to nodes, could be anything from the user, maybe a list?
-    metadataFields    = request.metadata_fields
+    cos_bucket_name   = request.bucket_name
+    chunk_size        = request.chunk_size
+    chunk_overlap     = request.chunk_overlap
+    es_index_name     = request.es_index_name
+    es_pipeline_name  = request.es_pipeline_name
+    es_model_name     = request.es_model_name
+    es_model_text_field = request.es_model_text_field
+    es_index_text_field = request.es_index_text_field
+    # TODO: Metadata to add to nodes, could be anything from the user, maybe a list?
+    metadata_fields     = request.metadata_fields
 
     try: 
         cos_reader = CloudObjectStorageReader(
-            bucket_name = cosBucketName,
+            bucket_name = cos_bucket_name,
             credentials = {
                 "apikey": cos_creds["cosIBMApiKeyId"],
                 "service_instance_id": cos_creds["cosServiceInstanceId"]
@@ -125,19 +125,19 @@ async def ingestDocs(request: ingestRequest)->ingestResponse:
         await async_es_client.info()
 
         # Pipeline must occur before index due to pipeline dependency
-        await create_inference_pipeline(async_es_client, esPipelineName, esIndexTextField, esModelTextField, esModelName)
-        await create_index(async_es_client, esIndexName, esIndexTextField, esPipelineName)
+        await create_inference_pipeline(async_es_client, es_pipeline_name, es_index_text_field, es_model_text_field, es_model_name)
+        await create_index(async_es_client, es_index_name, es_index_text_field, es_pipeline_name)
 
         Settings.embed_model = None
         Settings.llm = None
         Settings.node_parser = SentenceSplitter.from_defaults(
-            chunk_size=chunkSize, chunk_overlap=chunkOverlap
+            chunk_size=chunk_size, chunk_overlap=chunk_overlap
         )
 
         vector_store = ElasticsearchStore(
             es_client=async_es_client,
-            index_name=esIndexName,
-            text_field=esIndexTextField
+            index_name=es_index_name,
+            text_field=es_index_text_field
         )
 
         index = VectorStoreIndex.from_documents(
@@ -214,7 +214,7 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
     es_model_name    = request.es_model_name
     num_results      = request.num_results
     llm_params       = request.llm_params
-    document         = request.document
+    es_filters       = request.filters
 
     # Sets the llm instruction if the user provides it
     if not request.llm_instructions:
@@ -268,12 +268,14 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
 
     # Create a retriever object using the index and setting params
     
-    if document: 
+    if es_filters: 
+        print(es_filters)
+        for k, v in es_filters.items():
+            print(k)
+            print(v)
         filters = MetadataFilters(
                 filters=[
-                    MetadataFilter(
-                    key="file_name", operator=FilterOperator.EQ, value=document
-                ),
+                    MetadataFilter(key=k,operator=FilterOperator.EQ, value=v) for k, v in es_filters.items()
             ]
         )
         
