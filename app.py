@@ -268,7 +268,6 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
     index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
 
     # Create a retriever object using the index and setting params
-
     if es_filters: 
         print(es_filters)
         for k, v in es_filters.items():
