@@ -100,55 +100,56 @@ async def ingestDocs(request: ingestRequest)->ingestResponse:
     # TODO: Metadata to add to nodes, could be anything from the user, maybe a list?
     metadata_fields     = request.metadata_fields
 
-    try: 
-        cos_reader = CloudObjectStorageReader(
-            bucket_name = cos_bucket_name,
-            credentials = {
-                "apikey": cos_creds["cosIBMApiKeyId"],
-                "service_instance_id": cos_creds["cosServiceInstanceId"]
-            },
-            hostname = cos_creds["cosEndpointURL"]
-        )
+    # try: 
+    cos_reader = CloudObjectStorageReader(
+        bucket_name = cos_bucket_name,
+        credentials = {
+            "apikey": cos_creds["cosIBMApiKeyId"],
+            "service_instance_id": cos_creds["cosServiceInstanceId"]
+        },
+        hostname = cos_creds["cosEndpointURL"]
+    )
 
-        print(cos_reader.list_files())
+    print(cos_reader.list_files())
 
-        documents = await cos_reader.load_data()
-        print(f"Total documents: {len(documents)}\nExample document:\n{documents[0]}")
+    documents = await cos_reader.load_data()
+    print(f"Total documents: {len(documents)}\nExample document:\n{documents[0]}")
 
-        async_es_client = AsyncElasticsearch(
-            wxd_creds["wxdurl"],
-            basic_auth=(wxd_creds["username"], wxd_creds["password"]),
-            verify_certs=False,
-            request_timeout=3600,
-        )
+    async_es_client = AsyncElasticsearch(
+        wxd_creds["wxdurl"],
+        basic_auth=(wxd_creds["username"], wxd_creds["password"]),
+        verify_certs=False,
+        request_timeout=3600,
+    )
 
-        await async_es_client.info()
+    await async_es_client.info()
 
-        # Pipeline must occur before index due to pipeline dependency
-        await create_inference_pipeline(async_es_client, es_pipeline_name, es_index_text_field, es_model_text_field, es_model_name)
-        await create_index(async_es_client, es_index_name, es_index_text_field, es_pipeline_name)
+    # Pipeline must occur before index due to pipeline dependency
+    await create_inference_pipeline(async_es_client, es_pipeline_name, es_index_text_field, es_model_text_field, es_model_name)
+    await create_index(async_es_client, es_index_name, es_index_text_field, es_pipeline_name)
 
-        Settings.embed_model = None
-        Settings.llm = None
-        Settings.node_parser = SentenceSplitter.from_defaults(
-            chunk_size=chunk_size, chunk_overlap=chunk_overlap
-        )
+    Settings.embed_model = None
+    Settings.llm = None
+    Settings.node_parser = SentenceSplitter.from_defaults(
+        chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    )
 
-        vector_store = ElasticsearchStore(
-            es_client=async_es_client,
-            index_name=es_index_name,
-            text_field=es_index_text_field
-        )
+    vector_store = ElasticsearchStore(
+        es_client=async_es_client,
+        index_name=es_index_name,
+        text_field=es_index_text_field
+    )
 
-        index = VectorStoreIndex.from_documents(
-            documents,
-            storage_context=StorageContext.from_defaults(vector_store=vector_store),
-            show_progress=True,
-        )
+    index = VectorStoreIndex.from_documents(
+        documents,
+        storage_context=StorageContext.from_defaults(vector_store=vector_store),
+        show_progress=True,
+        use_async=True
+    )
 
-        return ingestResponse(response="success: number of documents loaded " + len(documents))
-    except Exception as e:
-        return ingestResponse(response = json.dumps({"error": repr(e)}))
+    return ingestResponse(response="success: number of documents loaded " + str(len(documents)))
+    # except Exception as e:
+    #     return ingestResponse(response = json.dumps({"error": repr(e)}))
 
 
 async def create_index(client, index_name, esIndexTextField, pipeline_name):
@@ -230,135 +231,91 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
     }
 
     # Attempt to connect to ElasticSearch and call Watsonx for a response
-    # try:
-    # Setting up the structure of the payload for the query engine
-    user_query = payload["input_data"][0]["values"][0][0]
+    try:
+        # Setting up the structure of the payload for the query engine
+        user_query = payload["input_data"][0]["values"][0][0]
 
-    # Create the prompt template based on llm_instructions
-    prompt_template = PromptTemplate(llm_instructions)
+        # Create the prompt template based on llm_instructions
+        prompt_template = PromptTemplate(llm_instructions)
 
-    # Create the watsonx LLM object that will be used for the RAG pattern
-    Settings.llm = CustomWatsonX(
-        credentials=wml_credentials,
-        project_id=project_id,
-        model_id=llm_params.model_id,
-        validate_model_id=False,
-        additional_kwargs=llm_params.parameters.dict(),
-    )
-    Settings.embed_model = None
-
-    # Create a client connection to elastic search
-    async_es_client = AsyncElasticsearch(
-        wxd_creds["wxdurl"],
-        basic_auth=(wxd_creds["username"], wxd_creds["password"]),
-        verify_certs=False,
-        request_timeout=3600,
-    )
-    
-    # Create a vector store using the elastic client
-    vector_store = ElasticsearchStore(
-        es_client=async_es_client,
-        index_name=index_name,
-        text_field=index_text_field
-    )
-
-    # Retrieve an index of the ingested documents in the vector store
-    # for later retrieval and querying
-    index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
-
-    # Create a retriever object using the index and setting params
-    
-    if es_filters: 
-        print(es_filters)
-        for k, v in es_filters.items():
-            print(k)
-            print(v)
-        filters = MetadataFilters(
-                filters=[
-                    MetadataFilter(key=k,operator=FilterOperator.EQ, value=v) for k, v in es_filters.items()
-            ]
+        # Create the watsonx LLM object that will be used for the RAG pattern
+        Settings.llm = CustomWatsonX(
+            credentials=wml_credentials,
+            project_id=project_id,
+            model_id=llm_params.model_id,
+            validate_model_id=False,
+            additional_kwargs=llm_params.parameters.dict(),
         )
-        
-        query_engine = index.as_query_engine(
-            text_qa_template=prompt_template,
-            similarity_top_k=num_results,
-            vector_store_query_mode="sparse",
-            vector_store_kwargs={
-                "custom_query": create_sparse_vector_query_with_model_and_filter(es_model_name, filters=filters)
-            },
-        )
-    else:
-        query_engine = index.as_query_engine(
-            text_qa_template=prompt_template,
-            similarity_top_k=num_results,
-            vector_store_query_mode="sparse",
-            vector_store_kwargs={
-                "custom_query": create_sparse_vector_query_with_model(es_model_name)
-            },
+        Settings.embed_model = None
+
+        # Create a client connection to elastic search
+        async_es_client = AsyncElasticsearch(
+            wxd_creds["wxdurl"],
+            basic_auth=(wxd_creds["username"], wxd_creds["password"]),
+            verify_certs=False,
+            request_timeout=3600,
         )
 
-    # Finally query the engine with the user question
-    response = query_engine.query(user_query)
+        # Create a vector store using the elastic client
+        vector_store = ElasticsearchStore(
+            es_client=async_es_client,
+            index_name=index_name,
+            text_field=index_text_field
+        )
 
-    # Format the data
-    data_response = {
-        "llm_response": response.response,
-        "references": [node.to_dict() for node in response.source_nodes]
-    }
+        # Retrieve an index of the ingested documents in the vector store
+        # for later retrieval and querying
+        index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
 
-    return queryLLMResponse(**data_response)
+        # Create a retriever object using the index and setting params
 
-    # except Exception as e:
-    #     return queryLLMResponse(
-    #         llm_response = "",
-    #         references=[{"error": repr(e)}]
-    #     )
+        if es_filters: 
+            print(es_filters)
+            for k, v in es_filters.items():
+                print(k)
+                print(v)
+            filters = MetadataFilters(
+                    filters=[
+                        MetadataFilter(key=k,operator=FilterOperator.EQ, value=v) for k, v in es_filters.items()
+                ]
+            )
+            
+            query_engine = index.as_query_engine(
+                text_qa_template=prompt_template,
+                similarity_top_k=num_results,
+                vector_store_query_mode="sparse",
+                vector_store_kwargs={
+                    "custom_query": create_sparse_vector_query_with_model_and_filter(es_model_name, filters=filters)
+                },
+            )
+        else:
+            query_engine = index.as_query_engine(
+                text_qa_template=prompt_template,
+                similarity_top_k=num_results,
+                vector_store_query_mode="sparse",
+                vector_store_kwargs={
+                    "custom_query": create_sparse_vector_query_with_model(es_model_name)
+                },
+            )
 
+        # Finally query the engine with the user question
+        response = query_engine.query(user_query)
 
-@app.post("/getDocs")
-def getDocs():
-    return {"Not":"Implemented yet"}
+        # Format the data
+        data_response = {
+            "llm_response": response.response,
+            "references": [node.to_dict() for node in response.source_nodes]
+        }
 
-@app.post("/watsonx")
-def watsonx(input, promptType, model):
-    
-    #GRANITE_13B_CHAT = 'ibm/granite-13b-chat-v1'
-    model = Model(
-    model_id=model,
-    params=generate_params,
-    credentials={
-        "apikey": os.environ.get("IBM_CLOUD_API_KEY"),
-        "url": "https://us-south.ml.cloud.ibm.com"
-    },
-    project_id=os.environ.get("WX_PROJECT_ID")
-    )
+        return queryLLMResponse(**data_response)
 
-    request_data = request.get_json()
-
-    key = os.environ.get("IBM_CLOUD_API_KEY")
-
-    promptText=open(promptType,"r")
-
-    prompt=promptText.read()
-
-    finalInput=prompt + "Input: " + input
-
-    generated_responsBaseModele = model.generate(prompt=finalInput)
-    response=generated_response['results'][0]['generated_text']
- 
-    #return render_template('index.html', message="SQL " + response)
-    #sql = [{'SQL': response}]
-    #print(sql)
-
-    #output_json_str = queryexec(response.replace('\n\n', '').replace(';',''))
-
-    return response
-
-@app.post("/setup_index")
-def setupIndex():
-    return {"Not":"Implemented yet"}
+    except Exception as e:
+        return queryLLMResponse(
+            llm_response = "",
+            references=[{"error": repr(e)}]
+        )
 
 
 if __name__ == '__main__':
     if 'uvicorn' not in sys.argv[0]:
-        uvicorn.run("app:app", host='0.0.0.0', port=3000, reload=True)
+        uvicorn.run("app:app", host='0.0.0.0', port=4050, reload=True)

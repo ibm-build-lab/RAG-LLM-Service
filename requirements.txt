@@ -10,3 +10,4 @@ llama-index-readers-file
 elasticsearch[async]
 pydantic
 ibm-cos-sdk
+docx2txt
