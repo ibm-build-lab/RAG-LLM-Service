@@ -22,7 +22,7 @@ To install this project locally, follow these steps:
     ```bash
     python -m venv assetEnv
     source assetEnv/bin/activate
-    python -m pip install -r requirements
+    python -m pip install -r requirements.txt
     ```
 
 4. **Start the project:**
@@ -69,7 +69,7 @@ To deploy this project on OpenShift, follow these steps:
     $ oc new-app watsonx-discovery-rag --name=watsonx-discovery-rag 
     ```
 
-5. ** Expose a Secure URL for this FastAPI app:**
+5. **Expose a Secure URL for this FastAPI app:**
 
     ```bash
     $ oc create route edge --service=watsonx-discovery-rag
