@@ -1,26 +1,18 @@
 import json
-import os, getpass
-import pandas as pd
+import os
 import uvicorn
 import sys
-# import nest_asyncio
+import time
 
 from utils import CloudObjectStorageReader, CustomWatsonX, create_sparse_vector_query_with_model, create_sparse_vector_query_with_model_and_filter
 from dotenv import load_dotenv
 
 # Fast API
-from fastapi import FastAPI, Form, BackgroundTasks, UploadFile
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-# wx.ai
-from ibm_watson_machine_learning.foundation_models import Model
-from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as GenParams
-from ibm_watson_machine_learning.foundation_models.utils.enums import ModelTypes, DecodingMethods
-from ibm_watson_machine_learning import APIClient
 
 # ElasticSearch
 from elasticsearch import Elasticsearch, AsyncElasticsearch
-from elasticsearch.exceptions import NotFoundError
 
 # Vector Store / WatsonX connection
 from llama_index.core import VectorStoreIndex, StorageContext, PromptTemplate, Settings
@@ -75,12 +67,16 @@ cos_creds = {
     "cosEndpointURL": os.environ.get("COS_ENDPOINT_URL")
 }
 
-generate_params = {
-    GenParams.MAX_NEW_TOKENS: 250,
-    GenParams.DECODING_METHOD: "greedy",
-    GenParams.STOP_SEQUENCES: ['END',';',';END'],
-    GenParams.REPETITION_PENALTY: 1
-}
+# Create a global client connection to elastic search
+async_es_client = AsyncElasticsearch(
+    wxd_creds["wxdurl"],
+    basic_auth=(wxd_creds["username"], wxd_creds["password"]),
+    verify_certs=False,
+    request_timeout=3600,
+)
+
+# Create a watsonx client cache for faster calls.
+custom_watsonx_cache = {}
 
 
 @app.get("/")
@@ -205,10 +201,12 @@ async def create_inference_pipeline(client, pipeline_name, esIndexTextField, esM
     response = await client.ingest.put_pipeline(id=pipeline_name, body=pipeline_config)
     return response
 
-# This function is NOT using the WML library to call the LLM. It is using
-# llama_index
+# Uses Llama-index to obtain the context from an ES query
+# which uses WML library underneath the hood via
+# a CustomWatsonX class in utils.py
 @app.post("/queryLLM")
 def queryLLM(request: queryLLMRequest)->queryLLMResponse:
+
     question         = request.question
     index_name       = request.es_index_name
     index_text_field = request.es_index_text_field
@@ -231,6 +229,7 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
     }
 
     # Attempt to connect to ElasticSearch and call Watsonx for a response
+    # try:
     # Setting up the structure of the payload for the query engine
     user_query = payload["input_data"][0]["values"][0][0]
 
@@ -238,22 +237,8 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
     prompt_template = PromptTemplate(llm_instructions)
 
     # Create the watsonx LLM object that will be used for the RAG pattern
-    Settings.llm = CustomWatsonX(
-        credentials=wml_credentials,
-        project_id=project_id,
-        model_id=llm_params.model_id,
-        validate_model_id=False,
-        additional_kwargs=llm_params.parameters.dict(),
-    )
+    Settings.llm = get_custom_watsonx(llm_params.model_id, llm_params.parameters.dict())
     Settings.embed_model = None
-
-    # Create a client connection to elastic search
-    async_es_client = AsyncElasticsearch(
-        wxd_creds["wxdurl"],
-        basic_auth=(wxd_creds["username"], wxd_creds["password"]),
-        verify_certs=False,
-        request_timeout=3600,
-    )
 
     # Create a vector store using the elastic client
     vector_store = ElasticsearchStore(
@@ -266,7 +251,6 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
     # for later retrieval and querying
     index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
 
-    # Create a retriever object using the index and setting params
     if es_filters: 
         print(es_filters)
         for k, v in es_filters.items():
@@ -277,60 +261,63 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
                     MetadataFilter(key=k,operator=FilterOperator.EQ, value=v) for k, v in es_filters.items()
             ]
         )
-        Settings.embed_model = None
-
-        # Create a client connection to elastic search
-        async_es_client = AsyncElasticsearch(
-            wxd_creds["wxdurl"],
-            basic_auth=(wxd_creds["username"], wxd_creds["password"]),
-            verify_certs=False,
-            request_timeout=3600,
+        
+        query_engine = index.as_query_engine(
+            text_qa_template=prompt_template,
+            similarity_top_k=num_results,
+            vector_store_query_mode="sparse",
+            vector_store_kwargs={
+                "custom_query": create_sparse_vector_query_with_model_and_filter(es_model_name, filters=filters)
+            },
+        )
+    else:
+        query_engine = index.as_query_engine(
+            text_qa_template=prompt_template,
+            similarity_top_k=num_results,
+            vector_store_query_mode="sparse",
+            vector_store_kwargs={
+                "custom_query": create_sparse_vector_query_with_model(es_model_name)
+            },
         )
 
-        # Create a vector store using the elastic client
-        vector_store = ElasticsearchStore(
-            es_client=async_es_client,
-            index_name=index_name,
-            text_field=index_text_field
-        )
+    # Finally query the engine with the user question
+    response = query_engine.query(user_query)
 
-        # Retrieve an index of the ingested documents in the vector store
-        # for later retrieval and querying
-        index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
+    data_response = {
+        "llm_response": response.response,
+        "references": [node.to_dict() for node in response.source_nodes]
+    }
 
-        # Create a retriever object using the index and setting params
+    return queryLLMResponse(**data_response)
 
-        if es_filters: 
-            print(es_filters)
-            for k, v in es_filters.items():
-                print(k)
-                print(v)
-            filters = MetadataFilters(
-                    filters=[
-                        MetadataFilter(key=k,operator=FilterOperator.EQ, value=v) for k, v in es_filters.items()
-                ]
-            )
-            
-            query_engine = index.as_query_engine(
-                text_qa_template=prompt_template,
-                similarity_top_k=num_results,
-                vector_store_query_mode="sparse",
-                vector_store_kwargs={
-                    "custom_query": create_sparse_vector_query_with_model_and_filter(es_model_name, filters=filters)
-                },
-            )
-        else:
-            query_engine = index.as_query_engine(
-                text_qa_template=prompt_template,
-                similarity_top_k=num_results,
-                vector_store_query_mode="sparse",
-                vector_store_kwargs={
-                    "custom_query": create_sparse_vector_query_with_model(es_model_name)
-                },
-            )
+    # except Exception as e:
+    #     return queryLLMResponse(
+    #         llm_response = "",
+    #         references=[{"error": repr(e)}]
+    #     )
 
-        # Finally query the engine with the user question
-        response = query_engine.query(user_query)
+def get_custom_watsonx(model_id, additional_kwargs):
+    # Serialize additional_kwargs to a JSON string, with sorted keys
+    additional_kwargs_str = json.dumps(additional_kwargs, sort_keys=True)
+    # Generate a hash of the serialized string
+    additional_kwargs_hash = hash(additional_kwargs_str)
+    
+    cache_key = f"{model_id}_{additional_kwargs_hash}"
+
+    # Check if the object already exists in the cache
+    if cache_key in custom_watsonx_cache:
+        return custom_watsonx_cache[cache_key]
+
+    # If not in the cache, create a new CustomWatsonX object and store it
+    custom_watsonx = CustomWatsonX(
+        credentials=wml_credentials,
+        project_id=project_id,
+        model_id=model_id,
+        validate_model_id=False,
+        additional_kwargs=additional_kwargs,
+    )
+    custom_watsonx_cache[cache_key] = custom_watsonx
+    return custom_watsonx
 
 if __name__ == '__main__':
     if 'uvicorn' not in sys.argv[0]:

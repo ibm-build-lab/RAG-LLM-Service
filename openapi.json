@@ -1,0 +1,212 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+        "title": "FastAPI",
+        "version": "0.1.0"
+    },
+    "servers": [
+        {
+          "url": "localhost:4050"
+        }
+    ],
+    "paths": {
+        "/queryLLM": {
+            "post": {
+                "summary": "Queryllm",
+                "operationId": "queryLLM_queryLLM_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/queryLLMRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/queryLLMResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "HTTPValidationError": {
+                "properties": {
+                    "detail": {
+                        "items": {
+                            "$ref": "#/components/schemas/ValidationError"
+                        },
+                        "type": "array",
+                        "title": "Detail"
+                    }
+                },
+                "type": "object",
+                "title": "HTTPValidationError"
+            },
+            "LLMParams": {
+                "properties": {
+                    "model_id": {
+                        "type": "string",
+                        "title": "Model Id",
+                        "default": "meta-llama/llama-2-70b-chat"
+                    },
+                    "inputs": {
+                        "type": "array",
+                        "title": "Inputs",
+                        "default": []
+                    },
+                    "parameters":{
+                      "type": "object",
+                      "properties": {
+                          "decoding_method": {
+                              "type": "string",
+                              "title": "Decoding Method",
+                              "default": "greedy"
+                          },
+                          "min_new_tokens": {
+                              "type": "integer",
+                              "title": "Min New Tokens",
+                              "default": 1
+                          },
+                          "max_new_tokens": {
+                              "type": "integer",
+                              "title": "Max New Tokens",
+                              "default": 500
+                          },
+                          "moderations": {
+                              "type": "object",
+                              "properties": {
+                                  "hap_input": {
+                                      "type": "string",
+                                      "title": "Hap Input",
+                                      "default": "true"
+                                  },
+                                  "threshold": {
+                                      "type": "number",
+                                      "title": "Threshold",
+                                      "default": 0.75
+                                  },
+                                  "hap_output": {
+                                      "type": "string",
+                                      "title": "Hap Output",
+                                      "default": "true"
+                                  }
+                              }
+                          }
+                      }
+                    }
+                },
+                "type": "object",
+                "title": "LLMParams"
+            },
+            "ValidationError": {
+                "properties": {
+                    "loc": {
+                        "items": {                           
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "title": "Location"
+                    },
+                    "msg": {
+                        "type": "string",
+                        "title": "Message"
+                    },
+                    "type": {
+                        "type": "string",
+                        "title": "Error Type"
+                    }
+                },
+                "type": "object",
+                "required": ["loc", "msg", "type"],
+                "title": "ValidationError"
+            },
+            "queryLLMRequest": {
+                "properties": {
+                    "llm_instructions": {
+                        "type": "string",
+                        "title": "LLM Instructions",
+                        "description": "Instructions for LLM"
+                    },
+                    "question": {
+                        "type": "string",
+                        "title": "Question"
+                    },
+                    "es_index_name": {
+                        "type": "string",
+                        "title": "Es Index Name"
+                    },
+                    "es_index_text_field": {
+                        "type": "string",
+                        "title": "Es Index Text Field",
+                        "default": "body_content_field"
+                    },
+                    "es_model_name": {
+                        "type": "string",
+                        "title": "Es Model Name",
+                        "default": ".elser_model_1"
+                    },
+                    "num_results": {
+                        "type": "string",
+                        "title": "Num Results",
+                        "default": "5"
+                    },
+                    "llm_params": {
+                        "$ref": "#/components/schemas/LLMParams"
+                    },
+                    "filters": {
+                        "type": "object",
+                        "title": "Filters",
+                        "example": {
+                            "date": "2022-01-01",
+                            "file_name": "test.pdf"
+                        }
+                    }
+                },
+                "type": "object",
+                "required": ["question", "es_index_name"],
+                "title": "queryLLMRequest"
+            },
+            "queryLLMResponse": {
+                "properties": {
+                    "llm_response": {
+                        "type": "string",
+                        "title": "Llm Response"
+                    },
+                    "references": {
+                        "items": {
+                            "type": "object"
+                        },
+                        "type": "array",
+                        "title": "References"
+                    }
+                },
+                "type": "object",
+                "required": ["llm_response", "references"],
+                "title": "queryLLMResponse"
+            }
+        }
+    }
+  }
+  
