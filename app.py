@@ -228,12 +228,15 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
     num_results      = request.num_results
     llm_params       = request.llm_params
     es_filters       = request.filters
+    llm_instructions = request.llm_instructions
 
-    # Sets the llm instruction if the user provides it
-    if not request.llm_instructions:
-        llm_instructions = os.environ.get("LLM_INSTRUCTIONS")
-    else:
-        llm_instructions = request.llm_instructions
+    # Sanity check for instructions
+    if "{query_str}" not in llm_instructions or "{context_str}" not in llm_instructions:
+        data_response = {
+            "llm_response": "",
+            "references": [{"error":"Please add {query_str} and {context_str} placeholders to the instructions."}]
+        }
+        return queryLLMResponse(**data_response)
 
     # Format payload for later query
     payload = {
@@ -343,11 +346,7 @@ def queryLLM(request: queryWDLLMRequest)->queryWDLLMResponse:
     collection_id    = request.collection_id
     wd_version       = request.wd_version
     wd_return_params = request.wd_return_params
-
-    if not request.llm_instructions:
-        llm_instructions = os.environ.get("LLM_INSTRUCTIONS")
-    else:
-        llm_instructions = request.llm_instructions
+    llm_instructions = request.llm_instructions
 
     # Sanity check for instructions
     if "{query_str}" not in llm_instructions or "{context_str}" not in llm_instructions:
@@ -428,7 +427,7 @@ def queryLLM(request: queryWDLLMRequest)->queryWDLLMResponse:
                 "references": [{"node":"not implemented"}]
             }
 
-            return queryLLMResponse(**data_response)
+            return queryWDLLMResponse(**data_response)
 
         for doc in doc_id_list:
             # Query WD based on a specific document and the NLQ question
@@ -517,7 +516,7 @@ def queryLLM(request: queryWDLLMRequest)->queryWDLLMResponse:
         "references": [{"node":"not implemented"}]
     }
 
-    return queryLLMResponse(**data_response)
+    return queryWDLLMResponse(**data_response)
 
 def get_custom_prompt(llm_instructions, wd_contexts, query_str):#
     context_str = "\n".join(wd_contexts)
