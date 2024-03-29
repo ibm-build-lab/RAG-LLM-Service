@@ -1,9 +1,17 @@
+# Create your own APIKey/Secret for the app
+RAG_APP_API_KEY="<MAKE_YOUR_OWN_KEY>"
+
 IBM_CLOUD_API_KEY=""
+WX_URL="https://us-south.ml.cloud.ibm.com"
+WX_PROJECT_ID=""
+
 COS_IBM_CLOUD_API_KEY=""
 COS_INSTANCE_ID=""
-BUCKET_NAME=""
-WX_PROJECT_ID=""
+COS_ENDPOINT_URL=""
+
 WXD_USERNAME=""
 WXD_PASSWORD=""
 WXD_URL=""
-WX_URL="https://us-south.ml.cloud.ibm.com"
+
+WD_API_KEY=""
+WD_URL=""
