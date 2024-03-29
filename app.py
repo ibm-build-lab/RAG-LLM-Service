@@ -8,7 +8,9 @@ from utils import CloudObjectStorageReader, CustomWatsonX, create_sparse_vector_
 from dotenv import load_dotenv
 
 # Fast API
-from fastapi import FastAPI
+from fastapi import FastAPI, Security, HTTPException
+from fastapi.security.api_key import APIKeyHeader
+from starlette.status import HTTP_403_FORBIDDEN
 from fastapi.middleware.cors import CORSMiddleware
 
 # ElasticSearch
@@ -50,6 +52,9 @@ app.add_middleware(
 )
 
 load_dotenv()
+# RAG APP Security
+API_KEY_NAME = "RAG-APP-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 #Token to IBM Cloud
 ibm_cloud_api_key = os.environ.get("IBM_CLOUD_API_KEY")
@@ -91,13 +96,21 @@ async_es_client = AsyncElasticsearch(
 # Create a watsonx client cache for faster calls.
 custom_watsonx_cache = {}
 
+# Basic security for accessing the App
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    if api_key_header == os.environ.get("RAG_APP_API_KEY"):
+        return api_key_header
+    else:
+        raise HTTPException(
+            status_code=HTTP_403_FORBIDDEN, detail="Could not validate RAG APP credentials. Please check your ENV."
+        )
 
 @app.get("/")
 def index():
     return {"Hello": "World"}
 
 @app.post("/ingestDocs")
-async def ingestDocs(request: ingestRequest)->ingestResponse:
+async def ingestDocs(request: ingestRequest, api_key: str = Security(get_api_key))->ingestResponse:
     cos_bucket_name   = request.bucket_name
     chunk_size        = request.chunk_size
     chunk_overlap     = request.chunk_overlap
@@ -218,7 +231,7 @@ async def create_inference_pipeline(client, pipeline_name, esIndexTextField, esM
 # which uses WML library underneath the hood via
 # a CustomWatsonX class in utils.py
 @app.post("/queryLLM")
-def queryLLM(request: queryLLMRequest)->queryLLMResponse:
+def queryLLM(request: queryLLMRequest, api_key: str = Security(get_api_key))->queryLLMResponse:
 
     question         = request.question
     index_name       = request.es_index_name
@@ -337,7 +350,7 @@ def get_custom_watsonx(model_id, additional_kwargs):
     return custom_watsonx
 
 @app.post("/queryWDLLM")
-def queryLLM(request: queryWDLLMRequest)->queryWDLLMResponse:
+def queryLLM(request: queryWDLLMRequest, api_key: str = Security(get_api_key))->queryWDLLMResponse:
     question         = request.question
     num_results      = request.num_results
     llm_params       = request.llm_params
