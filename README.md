@@ -25,13 +25,19 @@ To install this project locally, follow these steps:
     python -m pip install -r requirements.txt
     ```
 
-4. **Start the project:**
+4. **Update your secrets:**
+
+    Copy `env` to `.env` and fill in the variables with your url, passwords, and apikeys.
+
+    *Note*: `COS_IBM_CLOUD_API_KEY` and `IBM_CLOUD_API_KEY` are not the same key. 
+
+5. **Start the project:**
 
     ```bash
     python app.py
     ```
 
-5. **URL access:**
+6. **URL access:**
 
     `localhost:4050`
 
@@ -134,3 +140,21 @@ After deploying your application, you can access the Swagger documentation to te
 
 - **Code Engine:** You can find your application's URL in the IBM Cloud dashboard under Code Engine > Applications. Again, append `/docs` to access the Swagger documentation.
 
+## Using the API
+
+After deploying the application, you can now access the API. To do so by postman:
+
+1. Open a new tab and from the request type drowndown, select POST. In the url, paste your url (in this example, it's localhost): `http://127.0.0.1:4050/queryLLM`
+
+2. Under Headers, add the following key/value: `RAG-APP-API-Key`/`<RAG_APP_API_KEY_FROM_.ENV>`
+
+3. Under Body, select `raw` and paste the following json:
+```
+{
+  "question": "What is 2+2?",
+  "es_index_name": "<your_wxd_index_name>"
+}
+```
+4. Hit the blue `SEND` button and wait for your result.
+
+5. Check <url>/docs for additional parameters that can be passed in the body for more customization.
