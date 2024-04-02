@@ -231,7 +231,7 @@ async def create_inference_pipeline(client, pipeline_name, esIndexTextField, esM
 # which uses WML library underneath the hood via
 # a CustomWatsonX class in utils.py
 @app.post("/queryLLM")
-def queryLLM(request: queryLLMRequest, api_key: str = Security(get_api_key))->queryLLMResponse:
+async def queryLLM(request: queryLLMRequest, api_key: str = Security(get_api_key))->queryLLMResponse:
 
     question         = request.question
     index_name       = request.es_index_name
