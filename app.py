@@ -51,6 +51,10 @@ app.add_middleware(
 
 load_dotenv()
 
+#Load Model paramters
+llm_parameters = os.environ.get("MODEL_PARAMETERS")
+model_paramters = json.loads(llm_parameters)
+
 #Token to IBM Cloud
 ibm_cloud_api_key = os.environ.get("IBM_CLOUD_API_KEY")
 project_id = os.environ.get("WX_PROJECT_ID")
@@ -82,6 +86,14 @@ generate_params = {
     GenParams.REPETITION_PENALTY: 1
 }
 
+Settings.llm = CustomWatsonX(
+    credentials=wml_credentials,
+    project_id=project_id,
+    model_id=os.environ.get("MODEL_ID"),
+    validate_model_id=False,
+    additional_kwargs=model_paramters["model_parameters"],
+)
+Settings.embed_model = None
 
 @app.get("/")
 def index():
@@ -239,14 +251,14 @@ def queryLLM(request: queryLLMRequest)->queryLLMResponse:
         prompt_template = PromptTemplate(llm_instructions)
 
         # Create the watsonx LLM object that will be used for the RAG pattern
-        Settings.llm = CustomWatsonX(
-            credentials=wml_credentials,
-            project_id=project_id,
-            model_id=llm_params.model_id,
-            validate_model_id=False,
-            additional_kwargs=llm_params.parameters.dict(),
-        )
-        Settings.embed_model = None
+        #Settings.llm = CustomWatsonX(
+        #    credentials=wml_credentials,
+        #    project_id=project_id,
+        #    model_id=llm_params.model_id,
+        #    validate_model_id=False,
+        #    additional_kwargs=llm_params.parameters.dict(),
+        #)
+        #Settings.embed_model = None
 
         # Create a client connection to elastic search
         async_es_client = AsyncElasticsearch(
