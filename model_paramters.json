@@ -1,0 +1,16 @@
+{
+        "model_parameters": {
+        "model_id": "meta-llama/llama-2-70b-chat",
+        "inputs": [],
+        "parameters": {
+            "decoding_method": "greedy",
+        "max_new_tokens": 500,
+        "min_new_tokens": 1,
+        "moderations": {
+            "hap_input": "true",
+            "hap_output": "true",
+            "threshold": 0.75
+            }
+        }
+    }
+}
