@@ -350,7 +350,7 @@ def get_custom_watsonx(model_id, additional_kwargs):
     return custom_watsonx
 
 @app.post("/queryWDLLM")
-def queryLLM(request: queryWDLLMRequest, api_key: str = Security(get_api_key))->queryWDLLMResponse:
+def queryWDLLM(request: queryWDLLMRequest, api_key: str = Security(get_api_key))->queryWDLLMResponse:
     question         = request.question
     num_results      = request.num_results
     llm_params       = request.llm_params
