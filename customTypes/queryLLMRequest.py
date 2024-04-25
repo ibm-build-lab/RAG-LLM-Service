@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Dict, Any
 
 class Moderations(BaseModel):
     hap_input: str = 'true'
@@ -40,5 +40,9 @@ class queryLLMRequest(BaseModel):
     es_model_name: Optional[str] = Field(default=".elser_model_1")
     num_results: Optional[str] = Field(default="5")
     llm_params: Optional[LLMParams] = LLMParams()
-    document: str
+    filters: Optional[Dict[str, Any]] = Field(None,
+        example={
+            "date": "2022-01-01",
+            "file_name": "test.pdf"
+        })
 

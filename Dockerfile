@@ -7,12 +7,14 @@ WORKDIR /app
 # Copy the requirements file to the container and install dependencies
 COPY requirements.txt /app/requirements.txt
 USER 0
-RUN pip3 install  -r requirements.txt
+RUN pip3 install -r requirements.txt
 
 # Copy your FastAPI Python script to the container
 COPY . .
 
-EXPOSE 5000
+RUN python3 prereqs.py
+
+EXPOSE 4050
 
 # Set the command to run your Python script
 CMD ["python3", "app.py"]

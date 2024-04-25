@@ -2,3 +2,4 @@ assetEnv
 __pycache__*
 .env
 */__pycache__
+.DS_STORE

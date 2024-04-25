@@ -2,7 +2,12 @@ fastapi==0.103.1
 uvicorn==0.23.2
 python-dotenv==1.0.0
 ibm-watson-machine-learning>=1.0.326
-llama_index==0.9.40
-elasticsearch==8.11.0
+llama_index==0.10.9
+llama-index-vector-stores-elasticsearch
+llama-index-embeddings-elasticsearch
+llama-index-llms-watsonx
+llama-index-readers-file
+elasticsearch[async]
 pydantic
 ibm-cos-sdk
+docx2txt
