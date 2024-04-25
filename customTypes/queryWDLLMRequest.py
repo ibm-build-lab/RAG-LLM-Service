@@ -25,7 +25,7 @@ class Parameters(BaseModel):
         return params_dict
 
 class LLMParams(BaseModel):
-    model_id: str = "meta-llama/llama-2-70b-chat"
+    model_id: str = "meta-llama/llama-3-70b-instruct"
     inputs: list = []
     parameters: Parameters = Parameters()
 
