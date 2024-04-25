@@ -2,18 +2,12 @@
     "openapi": "3.0.0",
     "info": {
       "title": "FastAPI",
-      "version": "0.1.0"
+      "version": "0.1.0",
+      "description": "WxD & WD Rag application with wx.ai"
     },
     "servers": [
       {
-        "url": "https://{llm_route}",
-        "description": "The Route to the application hosting the queryllm application",
-        "variables": {
-          "llm_route": {
-            "default": "us-south.containers.appdomain.cloud",
-            "description": "The portion of the Route URL that follows https://"
-          }
-        }
+        "url": ""
       }
     ],
     "paths": {
@@ -134,7 +128,7 @@
             "model_id": {
               "type": "string",
               "title": "Model Id",
-              "default": "meta-llama/llama-2-70b-chat"
+              "default": "meta-llama/llama-3-70b-instruct"
             },
             "inputs": {
               "type": "array",
@@ -277,6 +271,9 @@
               "example": {
                 "date": "2022-01-01",
                 "file_name": "test.pdf"
+              },
+              "additionalProperties": {
+                "type": "string"
               },
               "title": "Filters"
             }
