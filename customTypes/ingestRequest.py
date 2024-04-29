@@ -10,4 +10,5 @@ class ingestRequest(BaseModel):
     es_model_name: Optional[str] = Field(default=".elser_model_1")
     es_model_text_field: Optional[str] = Field(default="text_field") 
     es_index_text_field: Optional[str] = Field(default="body_content_field") 
-    metadata_fields: Optional[List[str]] = None
+    # TODO: Implement metadata
+    # metadata_fields: Optional[List[str]] = None
