@@ -75,7 +75,10 @@ wd_creds = {
 # WML Creds
 wml_credentials = {
     "url": os.environ.get("WX_URL"),
-    "apikey": os.environ.get("IBM_CLOUD_API_KEY")
+    "apikey": os.environ.get("IBM_CLOUD_API_KEY"),
+    "instance_id": "openshift",
+    "username": "cpadmin",
+    "version": "4.8"
 }
 
 # COS Creds
