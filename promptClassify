@@ -1,0 +1,18 @@
+Instruction:Read the following text and assign a classification label as one of the following - rag, codegen.
+
+Input: Summarize meeting transcript for Clarifai
+Output: label: rag
+
+Input: Customer mood in Clarifai transcript
+Output: label: rag
+
+Input: What is Clarifai company headcount growth in the past 3 years
+Output: label: rag
+
+Input: How much funding did Clarifai achive in Series B
+Output: label: codegen
+
+Input: What is the total funding for Clarifai?
+Output: label: codegen
+
+Input:

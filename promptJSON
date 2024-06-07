@@ -1,0 +1,14 @@
+Instruction: Generate a natural language statement from the given data.
+
+Input:{COMPANY_NAME:Clarifai,AMOUNT__M_:60.0,ROUND:Series C}
+Output: Clarifai attained 60M of funding for Series C.END
+
+Input:{COMPANY_NAME:Clarifai,TOTALFUND:100.11999999}
+Output: Clarifai recieved a total funding of 100.1M dollars. END
+
+Input:{NewUsed:Used,TotalSales:555,DealerName:ABC motors,SalesPersonName:Mark Stevens,Count:3}{NewUsed:Used,TotalSales:213,DealerName:ABC motors,SalesPersonName:Mark Stevens,Count:5}
+Output: Mark Stevens from ABC motors generated 555 dollars selling 3 used cars and 5 new cars.END
+
+Input:{Make:Honda,TotalSales:5000,DealerName:ABC motors,SalesPersonName:Mark Stevens,Count:3}{Make:Toyota,TotalSales:2000,DealerName:ABC motors,SalesPersonName:Mark Stevens,Count:2}
+Output: The top makes Mark Stevens sold are Honda and Toyota.END
+

@@ -3,6 +3,7 @@ import os
 import uvicorn
 import sys
 import time
+import jaydebeapi
 
 from utils import CloudObjectStorageReader, CustomWatsonX, create_sparse_vector_query_with_model, create_sparse_vector_query_with_model_and_filter
 from dotenv import load_dotenv
@@ -37,6 +38,10 @@ from customTypes.queryLLMRequest import queryLLMRequest
 from customTypes.queryLLMResponse import queryLLMResponse
 from customTypes.queryWDLLMRequest import queryWDLLMRequest
 from customTypes.queryWDLLMResponse import queryWDLLMResponse
+from customTypes.classifyRequest import classifyRequest
+from customTypes.classifyResponse import classifyResponse
+from customTypes.texttosqlRequest import texttosqlRequest
+from customTypes.texttosqlResponse import texttosqlResponse
 
 app = FastAPI()
 
@@ -83,6 +88,17 @@ cos_creds = {
     "cosIBMApiKeyId": os.environ.get("COS_IBM_CLOUD_API_KEY"),
     "cosServiceInstanceId": os.environ.get("COS_INSTANCE_ID"),
     "cosEndpointURL": os.environ.get("COS_ENDPOINT_URL")
+}
+
+#DB2 Creds
+
+db2_creds = {
+    "db2_hostname": os.environ.get("DB2_HOST"),
+    "db2_port": os.environ.get("DB2_PORT"),
+    "db2_user": os.environ.get("DB2_USER"),
+    "db2_password": os.environ.get("DB2_PASSWORD"),
+    "db2_database": os.environ.get("DB2_DATABASE"),
+    "db2_schema": os.environ.get("DB2_SCHEMA")
 }
 
 # Create a global client connection to elastic search
@@ -537,6 +553,113 @@ def get_custom_prompt(llm_instructions, wd_contexts, query_str):#
     # Replace the placeholders in llm_instructions with the actual query and context
     prompt = llm_instructions.replace("{query_str}", query_str).replace("{context_str}", context_str)
     return prompt
+
+@app.post("/texttoxql")
+async def texttoxql(request: texttosqlRequest):
+
+    print(request.nl)
+    query = request.nl
+
+
+    watsonxSQLResponse = watsonx (query,"promptSQL", "ibm-mistralai/mixtral-8x7b-instruct-v01-q")
+   
+    sql = [{'SQL': watsonxSQLResponse}]
+    print(watsonxSQLResponse)
+
+    queryfromwatsonx = watsonxSQLResponse.replace('\n\nOutput:\n','').replace(';','')
+    print("parsed query : " + queryfromwatsonx)
+
+    output_json_str = queryexec(queryfromwatsonx)
+
+    print(output_json_str.get("answer"))
+
+    watsonxJSONResponse = watsonx (output_json_str.get("answer"),"promptJSON", "ibm-mistralai/mixtral-8x7b-instruct-v01-q")
+
+    print(watsonxJSONResponse)
+
+    nlResponse = watsonxJSONResponse.replace('Output: ','')
+
+    return classifyResponse(response=nlResponse)
+
+@app.post("/classify")
+async def classify(request: classifyRequest):
+
+    print(request.nl)
+    query = request.nl
+
+
+    watsonxSQLResponse = watsonx (query,"promptClassify", "meta-llama/llama-2-13b-chat")
+   
+    classify = [{'Classify': watsonxSQLResponse}]
+    classification = ""
+
+    if "rag" in watsonxSQLResponse:
+        classification = "rag"
+    elif "codegen" in watsonxSQLResponse:
+        classification = "codegen"
+    else:
+        classification = "unknown"
+        print(classify)
+
+    return classifyResponse(response=classification)
+
+@app.route("/queryexec", methods=['POST'])
+def queryexec(query):
+   
+    print("exec query:" + query)
+
+   # conn = jaydebeapi.connect("com.ibm.db2.jcc.DB2Driver", "jdbc:db2://b869522f-19c9-4c7c-9b2a-735b59a54ead.c1ogj3sd0tgtu0lqde00.databases.appdomain.cloud:32002/bludb:currentSchema=BEN;user=30734ea0;password=xG2dNqaTiTazCgQC;sslConnection=true;",None, "db2jcc4.jar")
+    conn = jaydebeapi.connect("com.ibm.db2.jcc.DB2Driver", "jdbc:db2://" + db2_creds[db2_hostname] + ":" + db2_creds[db2_port] + "/" + db2_creds[db2_database] + ":currentSchema=" + db2_creds[db2_schema] + ";user=" + db2_creds[db2_user] + ";" + "password=" + db2_creds[db2_password] + ";sslConnection=true;",None, "db2jcc4.jar")
+   
+    cur = conn.cursor()
+    
+    #cur.execute("SELECT * FROM prsgroup.rzy62361.country")
+    cur.execute(query)
+    rows = cur.fetchall()
+    op=""
+
+    for row in rows:
+        br="" 
+        for i,col in enumerate(row):
+            key=cur.description[i][0]
+            br += "{}:{},".format(key,col)
+        br = br[:-1]
+        op += "{" + br + "}"
+
+      #  op += watsonx.ai("{" + br + "}") + "\n"
+    nl=""
+    history=""
+    image=""
+    return dict(answer=op,query=query,nl=nl,history=history,image=image)
+
+@app.post("/watsonx")
+def watsonx(input, promptType, model):
+    
+    #GRANITE_13B_CHAT = 'ibm/granite-13b-chat-v1'
+    model = Model(
+    model_id=model,
+    params=generate_params,
+    credentials={
+        "apikey": os.environ.get("IBM_CLOUD_API_KEY"),
+        "url": "https://us-south.ml.cloud.ibm.com"
+    },
+    project_id=os.environ.get("WX_PROJECT_ID")
+    )
+
+    #request_data = request.get_json()
+
+    key = os.environ.get("IBM_CLOUD_API_KEY")
+
+    promptText=open(promptType,"r")
+
+    prompt=promptText.read()
+
+    finalInput=prompt + "Input: " + input
+
+    generated_response = model.generate(prompt=finalInput)
+    response=generated_response['results'][0]['generated_text']
+
+    return response
 
 if __name__ == '__main__':
     if 'uvicorn' not in sys.argv[0]:

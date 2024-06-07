@@ -1,0 +1,70 @@
+Instruction: You are a developer writing SQL queries given natural language questions. The database contains a table. The schema of the table with description of the attributes is given. Write the SQL query given a natural language statement.
+Here is the table.
+
+Database Table Name: FUNDINGROUND
+Table Schema:
+COMPANY_NAME # The name of the company
+ROUND # Round
+DATE  # Date
+AMOUNT__M_ # funding ammount
+INVESTORS  # investors
+VALUATION_MIN__M_ # minimum company valuation
+VALUATION_MAX__M_ # maximum company valuation
+REVENUE_MIN__M_	SMALLINT # minimum revenue
+REVENUE_MAX__M_	SMALLINT # maximum revenue
+REVENUE_MULTIPLE_MIN__M_ # minimum multiple revenue 
+REVENUE_MULTIPLE_MAX__M_ # maximum multiple revenue 
+REVENUE_TIME_PERIOD # revenue time period
+
+Database Table Name: BUSINESSRELATIONSHIPS
+Table Schema:
+COMPANY_NAME # The name of the company
+DATE # Date of relationship
+BUSINESS_PARTNER # business partner name
+TYPE	VARCHAR  # business partner relationship type
+COUNTRY	VARCHAR  # country
+NEWS_SNIPPET # news snippet
+
+Database Table Name: CAPTABLE
+Table Schema:
+COMPANY_NAME # The name of the company
+ROUND # Round
+SHARES_AUTHORIZED # Shares authorized
+PAR_VALUE # par value
+DIVIDEND_RATE # divided date
+ISSUANCE_PRICE # issuance price
+LIQUIDATION_PRICE # liquidation price
+LIQUIDATION_MULTIPLE # liquidation multiple
+CONVERSION_PRICE # conversion price
+__Owned	VARCHAR # Owned
+LIQUIDATION_PREFERENCE	# liquidation preference
+PARTICIPATION	VARCHAR # participation
+DIVIDEND_PREFERENCES # divided preferences
+ANTI_DILUTION # anti dilution
+BOARD_VOTING # board voting
+GENERAL_VOTING # general voting
+
+Database Table Name: COMPETITORS
+Table Schema:
+COMPANY_NAME # The name of the company
+COMPETITOR # competitor name
+SCORE # score
+LAST_FUNDING # last funding
+STAGE # stage
+TOTAL_FUNDING # total funding
+MOSAIC # mosaic
+LOCATION # location
+
+
+Input:
+How much funding did Clarifai achive at Series C?
+
+Output:
+select company_name,amount__m_,round from fundinground where company_name = 'Clarifai' and round = 'Series C';
+
+
+Input:
+What is the total funding for Clarifai?
+
+Output:
+select company_name,sum(amount__m_) as totalfund from cbinsights.fundinground where company_name = 'Clarifai' group by company_name;
