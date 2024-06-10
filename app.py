@@ -608,7 +608,6 @@ def queryexec(query):
    
     print("exec query:" + query)
 
-   # conn = jaydebeapi.connect("com.ibm.db2.jcc.DB2Driver", "jdbc:db2://b869522f-19c9-4c7c-9b2a-735b59a54ead.c1ogj3sd0tgtu0lqde00.databases.appdomain.cloud:32002/bludb:currentSchema=BEN;user=30734ea0;password=xG2dNqaTiTazCgQC;sslConnection=true;",None, "db2jcc4.jar")
     conn = jaydebeapi.connect("com.ibm.db2.jcc.DB2Driver", "jdbc:db2://" + db2_creds[db2_hostname] + ":" + db2_creds[db2_port] + "/" + db2_creds[db2_database] + ":currentSchema=" + db2_creds[db2_schema] + ";user=" + db2_creds[db2_user] + ";" + "password=" + db2_creds[db2_password] + ";sslConnection=true;",None, "db2jcc4.jar")
    
     cur = conn.cursor()
