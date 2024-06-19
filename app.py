@@ -3,6 +3,10 @@ import os
 import uvicorn
 import sys
 import time
+import re
+# postgresql
+import asyncpg
+import ssl
 
 from utils import CloudObjectStorageReader, CustomWatsonX, create_sparse_vector_query_with_model, create_sparse_vector_query_with_model_and_filter
 from dotenv import load_dotenv
@@ -37,7 +41,10 @@ from customTypes.queryLLMRequest import queryLLMRequest
 from customTypes.queryLLMResponse import queryLLMResponse
 from customTypes.queryWDLLMRequest import queryWDLLMRequest
 from customTypes.queryWDLLMResponse import queryWDLLMResponse
-
+from customTypes.SQLQueryRequest import SQLQuery
+from customTypes.SQLQueryResponse import SQLQueryResponse
+from customTypes.texttosqlRequest import texttosqlRequest
+from customTypes.texttosqlResponse import texttosqlResponse
 app = FastAPI()
 
 # Set up CORS
@@ -93,6 +100,17 @@ async_es_client = AsyncElasticsearch(
     request_timeout=3600,
 )
 
+# Postgresql stuff
+psql_creds = {
+    "username": os.environ.get("PSQL_USERNAME"),
+    "password": os.environ.get("PSQL_PASSWORD"),
+    "hostname": os.environ.get("PSQL_HOSTNAME"),
+    "port":     os.environ.get("PSQL_PORT"),
+    "database": os.environ.get("PSQL_DATABASE"),
+    "tls_location": os.environ.get("PSQL_TLS_LOCATION")
+}
+SSL_CERT_PATH = psql_creds["tls_location"]  # Path to your TLS certificate
+PSQL_DATABASE_URL = "postgresql://"+psql_creds["username"]+":"+psql_creds["password"]+"@"+psql_creds["hostname"]+":"+psql_creds["port"]+"/"+psql_creds["database"]+"?sslmode=verify-full"
 # Create a watsonx client cache for faster calls.
 custom_watsonx_cache = {}
 
@@ -537,6 +555,89 @@ def get_custom_prompt(llm_instructions, wd_contexts, query_str):#
     # Replace the placeholders in llm_instructions with the actual query and context
     prompt = llm_instructions.replace("{query_str}", query_str).replace("{context_str}", context_str)
     return prompt
+
+@app.post("/execute_sql")
+async def execute_sql(sql_query: SQLQuery, api_key: str = Security(get_api_key))->SQLQueryResponse:
+    try:
+        conn = await get_db_connection()
+        queryfromwatsonx = sql_query.query.strip()
+        print("*********EXECUTE_SQL************")
+        print(queryfromwatsonx)
+        if queryfromwatsonx.lower().startswith("select"):
+            results = await conn.fetch(queryfromwatsonx)
+            await conn.close()
+            data_response = {
+                "detail": "Query executed successfully.",
+                "results": [dict(record) for record in results]
+            }
+            return SQLQueryResponse(**data_response)
+        else:
+            await conn.execute(queryfromwatsonx)
+            await conn.close()
+            return SQLQueryResponse(detail="Query executed successfully.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def get_db_connection():
+    ssl_context = ssl.create_default_context(cafile=SSL_CERT_PATH)
+    return await asyncpg.connect(PSQL_DATABASE_URL, ssl=ssl_context)
+
+
+@app.post("/texttosql")
+async def texttoxql(request: texttosqlRequest, api_key: str = Security(get_api_key))->texttosqlResponse:
+
+    query = request.nl
+
+    watsonxSQLResponse = watsonx (query,"promptSQL", "codellama/codellama-34b-instruct-hf")
+   
+    print(watsonxSQLResponse)
+
+    # output_line=watsonxSQLResponse.strip()
+    select_pos = watsonxSQLResponse.lower().find('select')
+    semicolon_pos = watsonxSQLResponse.find(';', select_pos)
+
+    # Extract the substring from "select" up to (but not including) the first semicolon
+    if select_pos != -1 and semicolon_pos != -1:
+        output_line = watsonxSQLResponse[select_pos:semicolon_pos + 1]
+    else:
+        output_line = "Invalid query format."
+
+    
+
+    sql_query_response = await execute_sql(SQLQuery(query=output_line))
+
+    print(sql_query_response.results)
+
+    return texttosqlResponse(results=sql_query_response.results)
+
+# @app.post("/watsonx")
+def watsonx(input, promptType, model):
+    generate_params = {
+        GenParams.MIN_NEW_TOKENS: 1,
+        GenParams.MAX_NEW_TOKENS: 200,
+        GenParams.DECODING_METHOD: 'greedy',
+        GenParams.REPETITION_PENALTY: 1
+    }
+    #GRANITE_13B_CHAT = 'ibm/granite-13b-chat-v1'
+    model = Model(
+    model_id=model,
+    params=generate_params,
+    credentials={
+        "apikey": os.environ.get("IBM_CLOUD_API_KEY"),
+        "url": "https://us-south.ml.cloud.ibm.com"
+    },
+    project_id=os.environ.get("WX_PROJECT_ID")
+    )
+
+    with open("./sqlPrompts/"+promptType,"r") as file:
+        prompt=file.read()
+
+    finalInput = prompt.format(question=input)
+
+    generated_response = model.generate(prompt=finalInput)
+    response=generated_response['results'][0]['generated_text']
+
+    return response
 
 if __name__ == '__main__':
     if 'uvicorn' not in sys.argv[0]:

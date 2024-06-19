@@ -54,11 +54,42 @@
                 secretKeyRef:
                   name: <wxd-secret>
                   key: WD_API_KEY
-            - name: WD_API_KEY
+            - name: WD_URL
               valueFrom:
                 secretKeyRef:
                   name: <wxd-secret>
-                  key: WD_API_KEY
+                  key: WD_URL
+            - name: PSQL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: <wxd-secret>
+                  key: PSQL_USERNAME
+            - name: PSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: <wxd-secret>
+                  key: PSQL_PASSWORD
+            - name: PSQL_HOSTNAME
+              valueFrom:
+                secretKeyRef:
+                  name: <wxd-secret>
+                  key: PSQL_HOSTNAME
+            - name: PSQL_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: <wxd-secret>
+                  key: PSQL_PORT
+            - name: PSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: <wxd-secret>
+                  key: PSQL_DATABASE
+            - name: SSL_CERT_PATH
+              value: "/etc/tls/tls.crt"
+          volumeMounts:
+            - name: tls-cert
+              mountPath: /etc/tls
+              readOnly: true
           securityContext:
             capabilities:
               drop:
@@ -67,3 +98,7 @@
             allowPrivilegeEscalation: false
             seccompProfile:
               type: RuntimeDefault
+      volumes:
+      - name: tls-cert
+        secret:
+          secretName: <name_of_secret>

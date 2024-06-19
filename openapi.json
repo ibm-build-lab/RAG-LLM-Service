@@ -1,7 +1,7 @@
 {
     "openapi": "3.0.0",
     "info": {
-      "title": "FastAPI",
+      "title": "MintAI App",
       "version": "0.1.0",
       "description": "WxD & WD Rag application with wx.ai"
     },
@@ -98,6 +98,99 @@
             }
           ]
         }
+      },
+      "/execute_sql": {
+        "post": {
+          "responses": {
+            "200": {
+              "x-ibm-grounded-description": true,
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/SQLQueryResponse"
+                  }
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "x-ibm-grounded-description": true,
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SQLQuery"
+                }
+              }
+            }
+          },
+          "operationId": "execute_sql_execute_sql_post",
+          "summary": "Execute Sql",
+          "description": "Execute POSTGRESQL query",
+          "x-ibm-evidence-image-url": "https://s3.us-south.cloud-object-storage.appdomain.cloud/scrape-evidence/POST_/execute_sql.png?AWSAccessKeyId=fe77db1680f94f02a6ec138d1c0b9852&Signature=luE6XIe%2B4x%2BWPJTziScXuRNHGLE%3D&Expires=1720381298",
+          "security": [
+            {
+              "APIKeyHeader": []
+            }
+          ]
+        }
+      },
+      "/texttosql": {
+        "post": {
+          "responses": {
+            "200": {
+              "x-ibm-grounded-description": true,
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/texttosqlReponse"
+                  }
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "x-ibm-grounded-description": true,
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/texttosqlRequest"
+                }
+              }
+            }
+          },
+          "operationId": "texttosql_post",
+          "summary": "Text To SQL",
+          "description": "Execute a natural langauge query",
+          "security": [
+            {
+              "APIKeyHeader": []
+            }
+          ]
+        }
       }
     },
     "components": {
@@ -121,6 +214,87 @@
             }
           },
           "title": "HTTPValidationError"
+        },
+        "SQLQuery": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "title": "Query"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "title": "SQLQuery"
+        },
+        "SQLQueryResponse": {
+          "type": "object",
+          "properties": {
+            "detail": {
+              "type": "string",
+              "description": "Detail message",
+              "title": "Detail"
+            },
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "campaign_name": {
+                      "type": "string"
+                  },
+                  "total_spend": {
+                        "type": "number"
+                  }
+                },
+                "description": "List of query results",
+                "title": "Results"
+              }
+            }
+          },
+          "required": [
+            "detail"
+          ],
+          "title": "SQLQueryResponse"
+        },
+        "texttosqlRequest": {
+          "type": "object",
+          "properties": {
+            "nl": {
+              "type": "string",
+              "title": "Natural Language Question"
+            }
+          },
+          "required": [
+            "nl"
+          ],
+          "title": "texttosqlRequest"
+        },
+        "texttosqlReponse": {
+          "type": "object",
+          "properties": {
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "campaign_name": {
+                      "type": "string"
+                  },
+                  "total_spend": {
+                        "type": "number"
+                  }
+                },
+                "description": "List of query results",
+                "title": "Results"
+              }
+            }
+          },
+          "required": [
+            "results"
+          ],
+          "title": "texttosqlResponse"
         },
         "LLMParams": {
           "type": "object",

@@ -29,6 +29,8 @@ To install this project locally, follow these steps:
 
     Copy `env` to `.env` and fill in the variables with your url, passwords, and apikeys.
 
+    If you are using Postgres, create a secrets folder: `mkdir secrets` and place your `tls_cert.crt` inside the folder
+
     *Note*: `COS_IBM_CLOUD_API_KEY` and `IBM_CLOUD_API_KEY` are not the same key. 
 
 5. **Start the project:**
