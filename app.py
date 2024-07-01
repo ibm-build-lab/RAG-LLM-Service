@@ -4,7 +4,9 @@ import uvicorn
 import sys
 import time
 import jaydebeapi
+import pymysql
 
+from pymongo import MongoClient
 from utils import CloudObjectStorageReader, CustomWatsonX, create_sparse_vector_query_with_model, create_sparse_vector_query_with_model_and_filter
 from dotenv import load_dotenv
 
@@ -93,13 +95,34 @@ cos_creds = {
 #DB2 Creds
 
 db2_creds = {
-    "db2_hostname": os.environ.get("DB2_HOST"),
-    "db2_port": os.environ.get("DB2_PORT"),
-    "db2_user": os.environ.get("DB2_USER"),
-    "db2_password": os.environ.get("DB2_PASSWORD"),
-    "db2_database": os.environ.get("DB2_DATABASE"),
-    "db2_schema": os.environ.get("DB2_SCHEMA")
+    "db_hostname": os.environ.get("DB2_HOSTNAME"),
+    "db_port": os.environ.get("DB2_PORT"),
+    "db_user": os.environ.get("DB2_USERNAME"),
+    "db_password": os.environ.get("DB2_PASSWORD"),
+    "db_database": os.environ.get("DB2_DATABASE"),
+    "db_schema": os.environ.get("DB2_SCHEMA")
 }
+
+mysql_creds = {
+    "db_hostname": os.environ.get("MYSQL_HOSTNAME"),
+    "db_port": os.environ.get("MYSQL_PORT"),
+    "db_user": os.environ.get("MYSQL_USERNAME"),
+    "db_password": os.environ.get("MYSQL_PASSWORD"),
+    "db_database": os.environ.get("MYSQL_DATABASE"),
+    "tls_location": os.environ.get("MYSQL_TLS_LOCATION")
+}
+
+mdb_creds = {
+    "db_hostname": os.environ.get("MDB_HOSTNAME"),
+    "db_port": os.environ.get("MDB_PORT"),
+    "db_user": os.environ.get("MDB_USERNAME"),
+    "db_password": os.environ.get("MDB_PASSWORD"),
+    "db_database": os.environ.get("MDB_DATABASE"),
+    "db_schema": os.environ.get("MDB_SCHEMA"),
+    "tls_location": os.environ.get("MDB_TLS_LOCATION")
+}
+
+
 
 # Create a global client connection to elastic search
 async_es_client = AsyncElasticsearch(
@@ -557,27 +580,33 @@ def get_custom_prompt(llm_instructions, wd_contexts, query_str):#
 @app.post("/texttoxql")
 async def texttoxql(request: texttosqlRequest):
 
-    print(request.nl)
-    query = request.nl
+    print(request.question)
+    query = request.question
+    dbtype = request.dbtype
+    llm_params = request.llm_params
 
-
-    watsonxSQLResponse = watsonx (query,"promptSQL", "ibm-mistralai/mixtral-8x7b-instruct-v01-q")
+    watsonxSQLResponse = watsonx (query,"promptSQL", llm_params)
    
     sql = [{'SQL': watsonxSQLResponse}]
-    print(watsonxSQLResponse)
+    print("query from watsonx : " + watsonxSQLResponse + "done")
 
-    queryfromwatsonx = watsonxSQLResponse.replace('\n\nOutput:\n','').replace(';','')
+    #select company_name,amount__m_,round from fundinground where company_name = 'Clarifai' and round = 'Series B';
+
+    queryfromwatsonx = watsonxSQLResponse.replace('\n\nOutput:','').replace(';','')
+    
     print("parsed query : " + queryfromwatsonx)
+    
+    output_json_str = await queryexec(queryfromwatsonx, dbtype)
 
-    output_json_str = queryexec(queryfromwatsonx)
+    #print("result from DB: " + output_json_str.get("answer"))
 
-    print(output_json_str.get("answer"))
+    #watsonxJSONResponse = watsonx (output_json_str.get("answer"),"promptJSON", llm_params)
 
-    watsonxJSONResponse = watsonx (output_json_str.get("answer"),"promptJSON", "ibm-mistralai/mixtral-8x7b-instruct-v01-q")
+    #print(watsonxJSONResponse)
 
-    print(watsonxJSONResponse)
+    #nlResponse = watsonxJSONResponse.replace('Output: ','')
 
-    nlResponse = watsonxJSONResponse.replace('Output: ','')
+    nlResponse = output_json_str.get("answer")
 
     return classifyResponse(response=nlResponse)
 
@@ -586,7 +615,6 @@ async def classify(request: classifyRequest):
 
     print(request.nl)
     query = request.nl
-
 
     watsonxSQLResponse = watsonx (query,"promptClassify", "meta-llama/llama-2-13b-chat")
    
@@ -603,16 +631,45 @@ async def classify(request: classifyRequest):
 
     return classifyResponse(response=classification)
 
+async def get_db_connection(dbtype):
+
+    if dbtype == "DB2":
+        SQL_DATABASE_URL = "jdbc:db2://" + str(db2_creds["db_hostname"]) + ":" + str(db2_creds["db_port"]) + "/" + str(db2_creds["db_database"]) + ":currentSchema=" + str(db2_creds["db_schema"]) + ";user=" + str(db2_creds["db_user"]) + ";password=" + str(db2_creds["db_password"]) + ";sslConnection=true;"
+        print("SQL created " + SQL_DATABASE_URL)
+        return jaydebeapi.connect("com.ibm.db2.jcc.DB2Driver", SQL_DATABASE_URL, None, "db2jcc4.jar")
+    
+    elif dbtype == "MYSQL":
+        print("DB Host : " + str(mysql_creds["db_hostname"]))
+        return pymysql.connect(
+                        host=str(mysql_creds["db_hostname"]),
+                        port=int(mysql_creds["db_port"]),
+                        database=str(mysql_creds["db_database"]),
+                        user=str(mysql_creds["db_user"]),
+                        passwd=str(mysql_creds["db_password"]),
+                        ssl_ca=str(mysql_creds["tls_location"]),
+                        ssl_verify_cert=True,
+                        ssl_verify_identity=True)
+    
+    elif dbtype == "MONGODB":
+        tls_ca_file =  str(mdb_creds["tls_location"])
+        username = str(mdb_creds["db_user"])
+        password = str(mdb_creds["db_password"]) 
+        host = str(mdb_creds["db_hostname"])
+        port = str(mdb_creds["db_port"])  # default MongoDB port
+        return  MongoClient(f'mongodb://{username}:{password}@{host}:{port}',tls=True,tlsCAFile=tls_ca_file)
+
+
+
 @app.route("/queryexec", methods=['POST'])
-def queryexec(query):
+async def queryexec(query, dbtype):
    
     print("exec query:" + query)
-
-    conn = jaydebeapi.connect("com.ibm.db2.jcc.DB2Driver", "jdbc:db2://" + db2_creds[db2_hostname] + ":" + db2_creds[db2_port] + "/" + db2_creds[db2_database] + ":currentSchema=" + db2_creds[db2_schema] + ";user=" + db2_creds[db2_user] + ";" + "password=" + db2_creds[db2_password] + ";sslConnection=true;",None, "db2jcc4.jar")
-   
+    
+    conn = await get_db_connection(dbtype)  
+    print (conn)
+  
     cur = conn.cursor()
     
-    #cur.execute("SELECT * FROM prsgroup.rzy62361.country")
     cur.execute(query)
     rows = cur.fetchall()
     op=""
@@ -631,12 +688,22 @@ def queryexec(query):
     image=""
     return dict(answer=op,query=query,nl=nl,history=history,image=image)
 
-@app.post("/watsonx")
-def watsonx(input, promptType, model):
+#@app.post("/watsonx")
+def watsonx(input, promptType, llm_params):
     
+    generate_params = {
+        GenParams.MIN_NEW_TOKENS: llm_params.parameters.min_new_tokens,
+        GenParams.MAX_NEW_TOKENS: llm_params.parameters.max_new_tokens,
+        GenParams.DECODING_METHOD: llm_params.parameters.decoding_method,
+        GenParams.REPETITION_PENALTY: llm_params.parameters.repetition_penalty,
+        GenParams.TEMPERATURE: llm_params.parameters.temperature,
+        GenParams.STOP_SEQUENCES: ['END',';',';END;'],
+        GenParams.TOP_K: llm_params.parameters.top_k,
+    }
+
     #GRANITE_13B_CHAT = 'ibm/granite-13b-chat-v1'
     model = Model(
-    model_id=model,
+    model_id=llm_params.model_id,
     params=generate_params,
     credentials={
         "apikey": os.environ.get("IBM_CLOUD_API_KEY"),
