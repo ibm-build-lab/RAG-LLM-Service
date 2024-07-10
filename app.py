@@ -42,8 +42,12 @@ from customTypes.queryWDLLMRequest import queryWDLLMRequest
 from customTypes.queryWDLLMResponse import queryWDLLMResponse
 from customTypes.classifyRequest import classifyRequest
 from customTypes.classifyResponse import classifyResponse
+from customTypes.watsonchatRequest import watsonchatRequest
+from customTypes.watsonchatResponse import watsonchatResponse
 from customTypes.texttosqlRequest import texttosqlRequest
 from customTypes.texttosqlResponse import texttosqlResponse
+
+from customTypes.watsonchatRequest import LLMParams,Parameters,Moderations
 
 app = FastAPI()
 
@@ -588,9 +592,6 @@ async def texttoxql(request: texttosqlRequest):
     watsonxSQLResponse = watsonx (query,"promptSQL", llm_params)
    
     sql = [{'SQL': watsonxSQLResponse}]
-    print("query from watsonx : " + watsonxSQLResponse + "done")
-
-    #select company_name,amount__m_,round from fundinground where company_name = 'Clarifai' and round = 'Series B';
 
     queryfromwatsonx = watsonxSQLResponse.replace('\n\nOutput:','').replace(';','')
     
@@ -598,17 +599,99 @@ async def texttoxql(request: texttosqlRequest):
     
     output_json_str = await queryexec(queryfromwatsonx, dbtype)
 
-    #print("result from DB: " + output_json_str.get("answer"))
-
-    #watsonxJSONResponse = watsonx (output_json_str.get("answer"),"promptJSON", llm_params)
-
-    #print(watsonxJSONResponse)
-
-    #nlResponse = watsonxJSONResponse.replace('Output: ','')
-
     nlResponse = output_json_str.get("answer")
 
     return classifyResponse(response=nlResponse)
+
+@app.post("/watsonchat")
+async def watsonchat(request: watsonchatRequest, api_key: str = Security(get_api_key)):
+
+    print(request.question)
+    query = request.question
+    dbtype = request.dbtype   
+    user_id = request.user_id
+    index_name       = request.es_index_name
+    index_text_field = request.es_index_text_field
+    es_model_name    = request.es_model_name
+    model_text_field = request.es_model_text_field
+    num_results      = request.num_results
+    llm_instructions = request.ragllm_instructions
+
+    classifyllm_params = request.classifyllm_params
+    sqlllm_params = request.sqlllm_params
+    ragllm_params = request.ragllm_params
+    generalllm_params = request.generalllm_params
+
+    watsonxClassifyResponse = watsonx (query,"promptClassify", classifyllm_params)
+    classify = [{'Classify': watsonxClassifyResponse}]
+    classification = ""
+
+    if "RAG" in watsonxClassifyResponse:
+
+        moderations = Moderations (hap_input=ragllm_params.parameters.moderations.hap_input,
+                                   hap_output=ragllm_params.parameters.moderations.hap_output,
+                                   threshold=ragllm_params.parameters.moderations.threshold)
+        
+        paramters = Parameters (decoding_method=ragllm_params.parameters.decoding_method, 
+                                min_new_tokens=ragllm_params.parameters.min_new_tokens,
+                                max_new_tokens=ragllm_params.parameters.max_new_tokens,
+                                repetition_penalty=ragllm_params.parameters.repetition_penalty,
+                                temperature=ragllm_params.parameters.temperature,
+                                top_k=ragllm_params.parameters.top_k,
+                                top_p=ragllm_params.parameters.top_p,
+                                moderations=moderations)
+        
+        llmparams = LLMParams (model_id=ragllm_params.model_id, paramters=paramters)
+
+        queryLLMRequestInstance = queryLLMRequest (question=query, 
+                                                   es_index_name=index_name, 
+                                                   es_model_name=es_model_name,
+                                                   llmparams=llmparams)
+        queryLLMresponse= await queryLLM(queryLLMRequestInstance, api_key)
+        return watsonchatResponse(response=queryLLMresponse.llm_response)
+
+    elif "Text2SQL" in watsonxClassifyResponse:
+
+        moderations = Moderations (hap_input=sqlllm_params.parameters.moderations.hap_input,
+                                   hap_output=sqlllm_params.parameters.moderations.hap_output,
+                                   threshold=sqlllm_params.parameters.moderations.threshold)
+        
+        paramters = Parameters (decoding_method=sqlllm_params.parameters.decoding_method, 
+                                min_new_tokens=sqlllm_params.parameters.min_new_tokens,
+                                max_new_tokens=sqlllm_params.parameters.max_new_tokens,
+                                repetition_penalty=sqlllm_params.parameters.repetition_penalty,
+                                temperature=sqlllm_params.parameters.temperature,
+                                top_k=sqlllm_params.parameters.top_k,
+                                top_p=sqlllm_params.parameters.top_p,
+                                moderations=moderations)
+        
+        llmparams = LLMParams (model_id=sqlllm_params.model_id, paramters=paramters)
+        if user_id:
+            query=query+" for user " + user_id+"?"
+            print(query)
+        
+        texttosqlRequestInstance = texttosqlRequest (question=query, dbtype=request.dbtype, llmparams=llmparams)
+        texttoxqlresponse= await texttoxql(texttosqlRequestInstance)
+        return watsonchatResponse(response=texttoxqlresponse.response )
+    else:
+
+        moderations = Moderations (hap_input=generalllm_params.parameters.moderations.hap_input,
+                                   hap_output=generalllm_params.parameters.moderations.hap_output,
+                                   threshold=generalllm_params.parameters.moderations.threshold)
+        
+        paramters = Parameters (decoding_method=generalllm_params.parameters.decoding_method, 
+                                min_new_tokens=generalllm_params.parameters.min_new_tokens,
+                                max_new_tokens=generalllm_params.parameters.max_new_tokens,
+                                repetition_penalty=generalllm_params.parameters.repetition_penalty,
+                                temperature=generalllm_params.parameters.temperature,
+                                top_k=generalllm_params.parameters.top_k,
+                                top_p=generalllm_params.parameters.top_p,
+                                moderations=moderations)
+        
+        llmparams = LLMParams (model_id=generalllm_params.model_id, paramters=paramters)
+        assistant = "<|assistant|>\n<|user|>"
+        watsonxClassifyResponse = watsonx (query+"\n"+assistant,"promptGeneral", llmparams)
+        return watsonchatResponse(response=watsonxClassifyResponse)
 
 @app.post("/classify")
 async def classify(request: classifyRequest):
