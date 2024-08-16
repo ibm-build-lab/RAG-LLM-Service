@@ -7,7 +7,14 @@
     },
     "servers": [
       {
-        "url": ""
+            "url": "https://{llm_route}",
+            "description": "The Route to the application hosting the queryllm application",
+            "variables": {
+              "llm_route": {
+                "default": "res-res.turbonomic-demo-2bef1f4b4097001da9502000c44fc2b2-0000.us-south.containers.appdomain.cloud",
+                "description": "The portion of the Route URL that follows https://"
+              }
+            }
       }
     ],
     "paths": {

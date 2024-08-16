@@ -53,7 +53,7 @@ app.add_middleware(
 
 load_dotenv()
 # RAG APP Security
-API_KEY_NAME = "RAG-APP-API-Key"
+API_KEY_NAME = "RAG_APP_API_KEY"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 #Token to IBM Cloud
