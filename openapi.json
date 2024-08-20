@@ -112,7 +112,7 @@
         "APIKeyHeader": {
           "type": "apiKey",
           "in": "header",
-          "name": "RAG-APP-API-Key"
+          "name": "RAG_APP_API_Key"
         }
       },
       "schemas": {
@@ -135,7 +135,7 @@
             "model_id": {
               "type": "string",
               "title": "Model Id",
-              "default": "meta-llama/llama-3-70b-instruct"
+              "default": "meta-llama/llama2-13b-chat"
             },
             "inputs": {
               "type": "array",

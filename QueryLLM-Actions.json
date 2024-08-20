@@ -86,7 +86,7 @@
                     },
                     {
                       "value": {
-                        "scalar": "ibm/granite-13b-chat-v2"
+                        "scalar": "meta-llama/llama2-13b-chat"
                       },
                       "parameter": "llm_params.model_id"
                     },

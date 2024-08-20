@@ -19,21 +19,6 @@
                 secretKeyRef:
                   name: <wxd-secret>
                   key: WX_PROJECT_ID
-            - name: COS_INSTANCE_ID
-              valueFrom:
-                secretKeyRef:
-                  name: <wxd-secret>
-                  key: COS_INSTANCE_ID
-            - name: COS_IBM_CLOUD_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: <wxd-secret>
-                  key: COS_IBM_CLOUD_API_KEY
-            - name: COS_ENDPOINT_URL
-              valueFrom:
-                secretKeyRef:
-                  name: <wxd-secret>
-                  key: COS_ENDPOINT_URL
             - name: WXD_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -49,16 +34,6 @@
                 secretKeyRef:
                   name: <wxd-secret>
                   key: WXD_PASSWORD
-            - name: WD_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: <wxd-secret>
-                  key: WD_API_KEY
-            - name: WD_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: <wxd-secret>
-                  key: WD_API_KEY
           securityContext:
             capabilities:
               drop:
