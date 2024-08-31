@@ -9,6 +9,7 @@ import pymysql
 from pymongo import MongoClient
 from utils import CloudObjectStorageReader, CustomWatsonX, create_sparse_vector_query_with_model, create_sparse_vector_query_with_model_and_filter
 from dotenv import load_dotenv
+import pandas as pd
 
 # Fast API
 from fastapi import FastAPI, Security, HTTPException
@@ -28,6 +29,9 @@ from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilt
 # wx.ai
 from ibm_watson_machine_learning.foundation_models import Model
 from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as GenParams
+from ibm_watson_machine_learning.foundation_models.prompts import PromptTemplateManager
+from ibm_watson_machine_learning.foundation_models.utils.enums import PromptTemplateFormats
+
 
 # wd
 from ibm_watson import DiscoveryV2
@@ -70,6 +74,7 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 #Token to IBM Cloud
 ibm_cloud_api_key = os.environ.get("IBM_CLOUD_API_KEY")
 project_id = os.environ.get("WX_PROJECT_ID")
+space_id = os.environ.get("SPACE_ID")
 
 # wxd creds
 wxd_creds = {
@@ -306,8 +311,11 @@ async def queryLLM(request: queryLLMRequest, api_key: str = Security(get_api_key
     # Setting up the structure of the payload for the query engine
     user_query = payload["input_data"][0]["values"][0][0]
 
+
+    prompt=getprompt=get_latest_prompt_template("promptRAG")
+    
     # Create the prompt template based on llm_instructions
-    prompt_template = PromptTemplate(llm_instructions)
+    prompt_template = PromptTemplate(prompt)
 
     # Create the watsonx LLM object that will be used for the RAG pattern
     Settings.llm = get_custom_watsonx(llm_params.model_id, llm_params.parameters.dict())
@@ -323,7 +331,7 @@ async def queryLLM(request: queryLLMRequest, api_key: str = Security(get_api_key
     # Retrieve an index of the ingested documents in the vector store
     # for later retrieval and querying
     index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
-
+    print("Index: " + str(index.summary))
     if es_filters: 
         print(es_filters)
         for k, v in es_filters.items():
@@ -352,7 +360,7 @@ async def queryLLM(request: queryLLMRequest, api_key: str = Security(get_api_key
                 "custom_query": create_sparse_vector_query_with_model(es_model_name, model_text_field=model_text_field)
             },
         )
-    print(user_query)
+    print(query_engine)
     # Finally query the engine with the user question
     response = query_engine.query(user_query)
     print(response)
@@ -385,6 +393,7 @@ def get_custom_watsonx(model_id, additional_kwargs):
     custom_watsonx = CustomWatsonX(
         credentials=wml_credentials,
         project_id=project_id,
+        space_id=space_id,
         model_id=model_id,
         validate_model_id=False,
         additional_kwargs=additional_kwargs,
@@ -593,7 +602,9 @@ async def texttoxql(request: texttosqlRequest):
    
     sql = [{'SQL': watsonxSQLResponse}]
 
-    queryfromwatsonx = watsonxSQLResponse.replace('\n\nOutput:','').replace(';','')
+    print("final sql " + watsonxSQLResponse)
+
+    queryfromwatsonx = watsonxSQLResponse.replace('Output:','').replace(';','')
     
     print("parsed query : " + queryfromwatsonx)
     
@@ -625,6 +636,8 @@ async def watsonchat(request: watsonchatRequest, api_key: str = Security(get_api
     watsonxClassifyResponse = watsonx (query,"promptClassify", classifyllm_params)
     classify = [{'Classify': watsonxClassifyResponse}]
     classification = ""
+
+    print ("Classify Response: " + watsonxClassifyResponse)
 
     if "RAG" in watsonxClassifyResponse:
 
@@ -692,6 +705,40 @@ async def watsonchat(request: watsonchatRequest, api_key: str = Security(get_api
         assistant = "<|assistant|>\n<|user|>"
         watsonxClassifyResponse = watsonx (query+"\n"+assistant,"promptGeneral", llmparams)
         return watsonchatResponse(response=watsonxClassifyResponse)
+
+
+def get_latest_prompt_template(promptType):
+    prompt_mgr = PromptTemplateManager(
+        credentials={
+            "apikey": os.environ.get("IBM_CLOUD_API_KEY"),
+            "url": os.environ.get("WX_URL"),
+        },
+        space_id=os.environ.get("WX_SPACE_ID")
+    )
+    
+    df_prompts = prompt_mgr.list()
+
+    df_prompts = df_prompts.assign(
+            NAME=df_prompts['NAME'].astype(str),
+            LAST_MODIFIED=pd.to_datetime(df_prompts['LAST MODIFIED'])
+        )
+
+    filtered_df = df_prompts[df_prompts['NAME'] == promptType]
+
+    if filtered_df.empty:
+        raise ValueError(f"Prompt file does not exist for NAME = {promptType}")
+
+    # Find the latest record and prompt id based on 'LAST MODIFIED'
+    latest_index = filtered_df['LAST MODIFIED'].idxmax()
+    latest_record = filtered_df.loc[latest_index]
+
+    latest_prompt_id = latest_record['ID']
+
+    # Load the prompt template using the latest ID and format type as string
+    loaded_prompt_template_string = prompt_mgr.load_prompt(latest_prompt_id, PromptTemplateFormats.STRING)
+    
+    return loaded_prompt_template_string
+
 
 @app.post("/classify")
 async def classify(request: classifyRequest):
@@ -799,12 +846,11 @@ def watsonx(input, promptType, llm_params):
 
     key = os.environ.get("IBM_CLOUD_API_KEY")
 
-    promptText=open(promptType,"r")
+    #promptText=open(promptType,"r")
 
-    prompt=promptText.read()
-
-    finalInput=prompt + "Input: " + input
-
+    #prompt=promptText.read()
+    prompt=getprompt=get_latest_prompt_template(promptType)
+    finalInput=prompt + "\n\n" + "Input: " + input + "\n"
     generated_response = model.generate(prompt=finalInput)
     response=generated_response['results'][0]['generated_text']
 
