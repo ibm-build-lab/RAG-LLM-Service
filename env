@@ -4,6 +4,7 @@ RAG_APP_API_KEY="<MAKE_YOUR_OWN_KEY>"
 IBM_CLOUD_API_KEY=""
 WX_URL="https://us-south.ml.cloud.ibm.com"
 WX_PROJECT_ID=""
+WX_SPACE_ID=""
 
 COS_IBM_CLOUD_API_KEY=""
 COS_ENDPOINT_URL=""
