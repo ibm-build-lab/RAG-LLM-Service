@@ -776,9 +776,7 @@ async def get_db_connection(dbtype):
                         database=str(mysql_creds["db_database"]),
                         user=str(mysql_creds["db_user"]),
                         passwd=str(mysql_creds["db_password"]),
-                        ssl_ca=str(mysql_creds["tls_location"]),
-                        ssl_verify_cert=True,
-                        ssl_verify_identity=True)
+			ssl={'ca': None})
     
     elif dbtype == "MONGODB":
         tls_ca_file =  str(mdb_creds["tls_location"])
