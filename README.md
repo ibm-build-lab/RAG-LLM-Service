@@ -1,6 +1,6 @@
 # Watsonx.ai RAG Application
 
-This application exposes APIs to help set up a RAG pipeline using either **Watson Discovery** or **watsonx Discovery** (Elasticsearch) as the document respository.
+This application exposes APIs to help set up a RAG pipeline using **watsonx Discovery** (Elasticsearch) as the document respository.
 
 This README will guide you through the steps to deploy the project locally, on OpenShift or IBM Code Engine. Additionally, you will learn how to access the Swagger documentation once the project is deployed.
 
@@ -146,49 +146,6 @@ The `queryLLM` API queries a connected Elasticsearch database then sends the ret
 
     NOTE: The `filters` tag allows you to narrow down which documents to search on. You can specify from fields available within the document metadata. Remove this element if you don't want to filter on metadata.
    
-#### queryWDLLM
-
-The `queryWDLLM` API queries a connected **Watson Discovery** project then sends the returned text into **watsonx.ai** using the designated LLM to return a natural language response.
-
-1. Authenticate the `queryWDLLM` api by clicking the lock button to the right.  Enter the value you added for the `RAG_APP_API_KEY`.
-
-3. Click the `Try it out` button and customize your request body:
-   ```
-   {
-      "question": "string",
-      "project_id": "string",
-      "collection_id": "string",
-      "wd_version": "2020-08-30",
-      "wd_return_params": [
-        "Title",
-        "Text"
-      ],
-      "llm_instructions": "[INST]<<SYS>>You are a helpful, respectful, and honest assistant. Always answer as helpfully as possible, while being safe. Be brief in your answers. Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don\\'''t know the answer to a question, please do not share false information. <</SYS>>\nGenerate the next agent response by answering the question. You are provided several documents with titles. If the answer comes from different documents please mention all possibilities and use the tiles of documents to separate between topics or domains. Answer with no more than 150 words. If you cannot base your answer on the given document, please state that you do not have an answer.\n{context_str}<</SYS>>\n\n{query_str} Answer with no more than 150 words. If you cannot base your answer on the given document, please state that you do not have an answer. [/INST]",
-      "num_results": "5",
-      "llm_params": {
-        "model_id": "meta-llama/llama-3-70b-instruct",
-        "inputs": [],
-        "parameters": {
-          "decoding_method": "greedy",
-          "max_new_tokens": 500,
-          "min_new_tokens": 1,
-          "moderations": {
-            "hap_input": "true",
-            "hap_output": "true",
-            "threshold": 0.75
-          },
-          "repetition_penalty": 1.1,
-          "temperature": 0.7,
-          "top_k": 50,
-          "top_p": 1
-        }
-      },
-      "wd_document_names": [
-        "acme.pdf",
-        "test.docx"
-      ]
-   }
-   ```
 
 ### Test from cURL
 
@@ -213,8 +170,4 @@ curl --location '<application url>/queryLLM' \
   "question": "<your question>",
 }
 ```
-4. Hit the blue `SEND` button and wait for your result. 
-
-## Connecting this application to watsonx Assistant
-
-You can connect watsonx Assistant to invoke the `queryLLM` or `queryWDLLM` APIs. See the steps [here.](./watsonx-assistant-setup/README.md)
+4. Hit the blue `SEND` button and wait for your result.

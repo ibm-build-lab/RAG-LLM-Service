@@ -47,7 +47,5 @@ class queryLLMRequest(BaseModel):
     llm_params: Optional[LLMParams] = LLMParams()
     filters: Optional[Dict[str, Any]] = Field(None,
         example={
-            "date": "2022-01-01",
-            "file_name": "test.pdf"
         })
 

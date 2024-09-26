@@ -3,6 +3,7 @@ import os
 import uvicorn
 import sys
 import time
+from datetime import datetime
 
 from utils import CloudObjectStorageReader, CustomWatsonX, create_sparse_vector_query_with_model, create_sparse_vector_query_with_model_and_filter
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from elasticsearch import Elasticsearch, AsyncElasticsearch
 
 # Vector Store / WatsonX connection
-from llama_index.core import VectorStoreIndex, StorageContext, PromptTemplate, Settings
+from llama_index.core import Document, VectorStoreIndex, StorageContext, PromptTemplate, Settings
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter, FilterOperator, MetadataFilter
@@ -35,8 +36,6 @@ from customTypes.ingestRequest import ingestRequest
 from customTypes.ingestResponse import ingestResponse
 from customTypes.queryLLMRequest import queryLLMRequest
 from customTypes.queryLLMResponse import queryLLMResponse
-from customTypes.queryWDLLMRequest import queryWDLLMRequest
-from customTypes.queryWDLLMResponse import queryWDLLMResponse
 
 app = FastAPI()
 
@@ -65,11 +64,6 @@ wxd_creds = {
     "username": os.environ.get("WXD_USERNAME"),
     "password": os.environ.get("WXD_PASSWORD"),
     "wxdurl": os.environ.get("WXD_URL")
-}
-
-wd_creds = {
-    "apikey": os.environ.get("WD_API_KEY"),
-    "wd_url": os.environ.get("WD_URL")
 }
 
 # WML Creds
@@ -111,7 +105,13 @@ def index():
 
 @app.post("/ingestDocs")
 async def ingestDocs(request: ingestRequest, api_key: str = Security(get_api_key))->ingestResponse:
-    cos_bucket_name   = request.bucket_name
+    GUID        = request.GUID
+    title       = request.title
+    URL         = request.URL
+    content     = request.content
+    tags        = request.tags
+    updated_date = request.updated_date.strftime("%Y-%m-%dT%H:%M:%S") if isinstance(request.updated_date, datetime) else request.updated_date
+    view_security_roles = request.view_security_roles
     chunk_size        = request.chunk_size
     chunk_overlap     = request.chunk_overlap
     es_index_name     = request.es_index_name
@@ -121,21 +121,6 @@ async def ingestDocs(request: ingestRequest, api_key: str = Security(get_api_key
     es_index_text_field = request.es_index_text_field
     # TODO: Metadata to add to nodes, could be anything from the user, maybe a list?
     #metadata_fields     = request.metadata_fields
-
-    # try: 
-    cos_reader = CloudObjectStorageReader(
-        bucket_name = cos_bucket_name,
-        credentials = {
-            "apikey": cos_creds["cosIBMApiKeyId"],
-            "service_instance_id": cos_creds["cosServiceInstanceId"]
-        },
-        hostname = cos_creds["cosEndpointURL"]
-    )
-
-    print(cos_reader.list_files())
-
-    documents = await cos_reader.load_data()
-    print(f"Total documents: {len(documents)}")
 
     try:
         async_es_client = AsyncElasticsearch(
@@ -165,7 +150,30 @@ async def ingestDocs(request: ingestRequest, api_key: str = Security(get_api_key
         text_field=es_index_text_field
     )
 
+    splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    
+    # Split the content into chunks
+    content_chunks = splitter.split_text(content)
+
     try:
+        # Create documents for each chunk
+        documents = []
+        for i, chunk in enumerate(content_chunks):
+            documents.append(
+                Document(
+                    text=chunk,
+                    metadata={
+                        "guid": GUID,
+                        "title": title,
+                        "url": URL,
+                        "tags": tags,
+                        "updated_date": updated_date,
+                        "view_security_roles": view_security_roles,
+                        "chunk_index": i 
+                }
+            )
+        )
+
         index = VectorStoreIndex.from_documents(
             documents,
             storage_context=StorageContext.from_defaults(vector_store=vector_store),
@@ -175,7 +183,7 @@ async def ingestDocs(request: ingestRequest, api_key: str = Security(get_api_key
     except Exception as e:
       return ingestResponse(response = json.dumps({"error": repr(e)}))
     else:
-      return ingestResponse(response="success: number of documents loaded " + str(len(documents)))
+      return ingestResponse(response="success: content loaded")
 
 async def create_index(client, index_name, esIndexTextField, pipeline_name):
     print("Creating the index...")
@@ -183,7 +191,14 @@ async def create_index(client, index_name, esIndexTextField, pipeline_name):
         "mappings": {
             "properties": {
                 "ml.tokens": {"type": "rank_features"}, 
-                esIndexTextField: {"type": "text"}}
+                esIndexTextField: {"type": "text"},
+                "guid": {"type": "keyword"},
+                "title": {"type": "text"},
+                "url": {"type": "text"},
+                "tags": {"type": "keyword"},
+                "updated_date": {"type": "date"},
+                "view_security_roles": {"type": "text"},
+            }
         },
         "settings": {
             "index.default_pipeline": pipeline_name,
@@ -215,8 +230,11 @@ async def create_inference_pipeline(client, pipeline_name, esIndexTextField, esM
                     "inference_config": {"text_expansion": {"results_field": "tokens"}},
                 }
             },
-            {"set": {"field": "file_name", "value": "{{metadata.file_name}}"}},
-            {"set": {"field": "url", "value": "{{metadata.url}}"}},
+            {"set": {"field": "guid", "value": "{{metadata.guid}}"}},
+            {"set": {"field": "title", "value": "{{metadata.title}}"}},
+            {"set": {"field": "tags", "value": "{{metadata.tags}}"}},
+            {"set": {"field": "updated_date", "value": "{{metadata.updated_date}}"}},
+            {"set": {"field": "view_security_roles", "value": "{{metadata.view_security_roles}}"}},
         ],
         "version": 1,
     }
@@ -351,195 +369,6 @@ def get_custom_watsonx(model_id, additional_kwargs):
     )
     custom_watsonx_cache[cache_key] = custom_watsonx
     return custom_watsonx
-
-@app.post("/queryWDLLM")
-def queryWDLLM(request: queryWDLLMRequest, api_key: str = Security(get_api_key))->queryWDLLMResponse:
-    question         = request.question
-    num_results      = request.num_results
-    llm_params       = request.llm_params
-    wd_document_names= request.wd_document_names
-    project_id       = request.project_id
-    collection_id    = request.collection_id
-    wd_version       = request.wd_version
-    wd_return_params = request.wd_return_params
-    llm_instructions = request.llm_instructions
-
-    # Sanity check for instructions
-    if "{query_str}" not in llm_instructions or "{context_str}" not in llm_instructions:
-        data_response = {
-            "llm_response": "",
-            "references": [{"error":"Please add {query_str} and {context_str} placeholders to the instructions."}]
-        }
-        return queryLLMResponse(**data_response)
-
-    # Sanity check for Watson Discovery
-    if not wd_creds["apikey"] or wd_creds["wd_url"] == "":
-        data_response = {
-                "llm_response": "",
-                "references": [{"error":"Please update the environment variables for Watson Discovery: WD_API & WD_URL"}]
-            }
-        return queryLLMResponse(**data_response)
-    
-    authenticator = IAMAuthenticator(wd_creds["apikey"])
-    discovery = DiscoveryV2(
-        version=wd_version,
-        authenticator=authenticator
-    )
-
-    discovery.set_service_url(wd_creds["wd_url"])
-
-    generate_params = {
-        GenParams.MIN_NEW_TOKENS: llm_params.parameters.min_new_tokens,
-        GenParams.MAX_NEW_TOKENS: llm_params.parameters.max_new_tokens,
-        GenParams.DECODING_METHOD: llm_params.parameters.decoding_method,
-        GenParams.REPETITION_PENALTY: llm_params.parameters.repetition_penalty,
-        GenParams.TEMPERATURE: llm_params.parameters.temperature,
-        GenParams.TOP_K: llm_params.parameters.top_k,
-        GenParams.TOP_P: llm_params.parameters.top_p
-    }
-
-    model = Model(
-        model_id=llm_params.model_id,
-        params=generate_params,
-        credentials={
-            "apikey": os.environ.get("IBM_CLOUD_API_KEY"),
-            "url": os.environ.get("WX_URL")
-        },
-        project_id=os.environ.get("WX_PROJECT_ID")
-    )
-    
-    results = []
-    wd_contexts = []
-
-    # Filter the documents if the user provides it.
-    if wd_document_names: 
-        all_results = []
-
-        listDocs = discovery.list_documents(
-            project_id=project_id,
-            collection_id=collection_id
-        )
-
-        data = listDocs.result
-
-        doc_id_list = []
-        # Get the document details for each document passed by the user
-        for doc_id in data["documents"]:
-            doc = discovery.get_document(
-                project_id=project_id,
-                collection_id=collection_id,
-                document_id=doc_id['document_id']
-            ).get_result()
-
-            # Create an object containing the document name and its doc id
-            for wd_document_name in wd_document_names:
-                if doc["filename"] == wd_document_name:
-                    doc_id_list.append({'doc_name': wd_document_name, 'doc_id': doc_id['document_id']})
-
-        # Sanity checking to make sure the provided documents are available.
-        if not doc_id_list or len(doc_id_list) != len(wd_document_names):
-            data_response = {
-                "llm_response": "One or more documents are not found in the Watson Discovery Collection or Project",
-                "references": [{"node":"not implemented"}]
-            }
-
-            return queryWDLLMResponse(**data_response)
-
-        for doc in doc_id_list:
-            # Query WD based on a specific document and the NLQ question
-            # https://cloud.ibm.com/docs/discovery-data?topic=discovery-data-query-reference
-            # Link above contains the operator :: from the filter below
-            discovery_json = discovery.query(
-                project_id=project_id,
-                filter='document_id::' + str(doc["doc_id"]),
-                return_=wd_return_params,
-                natural_language_query=question,
-                count=num_results
-            ).get_result()
-            
-            all_results.append(discovery_json["results"])
-
-        # Iterate over all of the filtered WD results and prepare the passages for prompting
-        for results in all_results:
-            for document in results:
-                document_id = document['document_id']
-                passages = document['document_passages']
-                results = []
-
-                # Find the document title by its ID
-                document_title = None
-                for item in doc_id_list:
-                    if item['doc_id'] == document_id:
-                        document_title = item['doc_name']
-                        break
-
-                for item in passages:
-                    # Remove the <em> and </em> tags from the passage
-                    passage_text = item["passage_text"].replace("<em>", "").replace("</em>", "")
-                    
-                    # If document_title is available append it to the passage_text for context
-                    if document_title:
-                        passage_text = f"{document_title}: {passage_text}"
-
-                    results.append(passage_text)
-
-                # Join all passages for a single document and append to wd_contexts
-                wd_contexts.append("\n".join(results))
-                
-    # Do a general search without filters   
-    else:
-        discovery_json = discovery.query(
-            project_id=project_id,
-            return_=wd_return_params,
-            natural_language_query=question,
-            count=num_results
-        ).get_result()
-
-        # Iterate over the WD results and prepare the passages for prompting
-        for document in discovery_json["results"]:
-            document_id = document['document_id']
-            passages = document['document_passages']
-            results = []
-
-            # Find the document title by its ID
-            document_title = None
-            doc = discovery.get_document(
-                project_id=project_id,
-                collection_id=collection_id,
-                document_id=document_id
-            ).get_result()
-            document_title = doc["filename"]
-
-            for item in passages:
-                # Remove the <em></em> tags
-                passage_text = item["passage_text"].replace("<em>", "").replace("</em>", "")
-                
-                # If document_title is available append it to the passage_text for context
-                if document_title:
-                    passage_text = f"{document_title}: {passage_text}"
-
-                results.append(passage_text)
-            # Join all passages for a single document and append to wd_contexts
-            wd_contexts.append("\n".join(results))
-
-    prompt = get_custom_prompt(llm_instructions, wd_contexts, question)
-
-    generated_response = model.generate(prompt=prompt)
-    response=generated_response['results'][0]['generated_text']
-
-    data_response = {
-        "llm_response": response,
-        "references": [{"node":"not implemented"}]
-    }
-
-    return queryWDLLMResponse(**data_response)
-
-def get_custom_prompt(llm_instructions, wd_contexts, query_str):#
-    context_str = "\n".join(wd_contexts)
-
-    # Replace the placeholders in llm_instructions with the actual query and context
-    prompt = llm_instructions.replace("{query_str}", query_str).replace("{context_str}", context_str)
-    return prompt
 
 if __name__ == '__main__':
     if 'uvicorn' not in sys.argv[0]:

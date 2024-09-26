@@ -49,16 +49,6 @@
                 secretKeyRef:
                   name: <secret-name>
                   key: WXD_PASSWORD
-            - name: WD_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: <secret-name>
-                  key: WD_API_KEY
-            - name: WD_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: <secret-name>
-                  key: WD_API_KEY
           securityContext:
             capabilities:
               drop:

@@ -22,7 +22,3 @@ WX_PROJECT_ID=""
 WXD_URL="<url>:<port>"
 WXD_USERNAME=""
 WXD_PASSWORD=""
-
-# Watson Discovery connection, used by searchWDLLM
-WD_API_KEY=""
-WD_URL=""
