@@ -69,13 +69,24 @@ The specified model must be downloaded and deployed into the Elasticsearch insta
 3. Click the `Try it out` button and customize your request body:
     ```
     {
-      "bucket_name": "rag-app-test",
-      "es_index_name": "rag-llm-ingest-index",
-      "es_pipeline_name": "rag-llm-ingest",
+      "GUID": "string",
+      "title": "string",
+      "URL": "string",
+      "content": "string",
+      "tags": [
+        "string"
+          ],
+      "updated_date": "2024-09-26T19:33:28.221Z",
+      "view_security_roles": [
+        "string"
+          ],
+      "es_index_name": "string",
+      "es_pipeline_name": "string",
       "chunk_size": "512",
       "chunk_overlap": "256",
       "es_model_name": ".elser_model_2_linux-x86_64",
-      "es_index_text_field": "body_content_field"
+      "es_model_text_field": "text_field",
+      "es_index_text_field": "content"
     }
     ```
 
