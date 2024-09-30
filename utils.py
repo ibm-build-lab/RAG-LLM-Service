@@ -296,7 +296,7 @@ class CustomWatsonX(WatsonX):
     ) -> None:
         super().__init__(
             credentials=credentials,
-            model_id="meta-llama/llama-2-70b-chat",
+            model_id="ibm/granite-13b-chat-v2",
             project_id=project_id,
             space_id=space_id,
             max_new_tokens=max_new_tokens,
