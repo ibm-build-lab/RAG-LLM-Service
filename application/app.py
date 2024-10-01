@@ -13,6 +13,8 @@ from fastapi import FastAPI, Security, HTTPException
 from fastapi.security.api_key import APIKeyHeader
 from starlette.status import HTTP_403_FORBIDDEN
 from fastapi.middleware.cors import CORSMiddleware
+from aiohttp import ClientSession
+import asyncio
 
 # ElasticSearch
 from elasticsearch import Elasticsearch, AsyncElasticsearch
@@ -38,6 +40,19 @@ from customTypes.queryLLMRequest import queryLLMRequest
 from customTypes.queryLLMResponse import queryLLMResponse
 
 app = FastAPI()
+
+session = None  # Global session variable
+
+@app.on_event("startup")
+async def startup_event():
+    global session
+    session = ClientSession()  # Create a new session
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global session
+    if session:
+        await session.close()  # Properly close the session
 
 # Set up CORS
 origins = ["*"]
@@ -109,6 +124,7 @@ async def ingestDocs(request: ingestRequest, api_key: str = Security(get_api_key
     title       = request.title
     URL         = request.URL
     content     = request.content
+    content_type= request.content_type
     tags        = request.tags
     updated_date = request.updated_date.strftime("%Y-%m-%dT%H:%M:%S") if isinstance(request.updated_date, datetime) else request.updated_date
     view_security_roles = request.view_security_roles
@@ -165,6 +181,7 @@ async def ingestDocs(request: ingestRequest, api_key: str = Security(get_api_key
                     metadata={
                         "guid": GUID,
                         "title": title,
+                        "content_type": content_type,
                         "url": URL,
                         "tags": tags,
                         "updated_date": updated_date,
@@ -194,6 +211,7 @@ async def create_index(client, index_name, esIndexTextField, pipeline_name):
                 esIndexTextField: {"type": "text"},
                 "guid": {"type": "keyword"},
                 "title": {"type": "text"},
+                "content_type": {"type": "text"},
                 "url": {"type": "text"},
                 "tags": {"type": "keyword"},
                 "updated_date": {"type": "date"},
@@ -232,6 +250,7 @@ async def create_inference_pipeline(client, pipeline_name, esIndexTextField, esM
             },
             {"set": {"field": "guid", "value": "{{metadata.guid}}"}},
             {"set": {"field": "title", "value": "{{metadata.title}}"}},
+            {"set": {"field": "content_type", "value": "{{metadata.content_type}}"}},
             {"set": {"field": "tags", "value": "{{metadata.tags}}"}},
             {"set": {"field": "updated_date", "value": "{{metadata.updated_date}}"}},
             {"set": {"field": "view_security_roles", "value": "{{metadata.view_security_roles}}"}},
