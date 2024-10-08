@@ -614,6 +614,36 @@ async def texttoxql(request: texttosqlRequest):
 
     return classifyResponse(response=nlResponse)
 
+
+@app.post("/texttosqltonl")
+async def texttoxql(request: texttosqlRequest):
+
+    print(request.question)
+    query = request.question
+    dbtype = request.dbtype
+    llm_params = request.llm_params
+
+    watsonxSQLResponse = watsonx (query,"promptSQL", llm_params)
+   
+    sql = [{'SQL': watsonxSQLResponse}]
+
+    print("final sql " + watsonxSQLResponse)
+
+    queryfromwatsonx = watsonxSQLResponse.replace('Output:','').replace(';','')
+    
+    print("parsed query : " + queryfromwatsonx)
+    
+    output_json_str = await queryexec(queryfromwatsonx, dbtype)
+
+    nlResponse = output_json_str.get("answer")
+
+    #Call watosnx.ai to generate NL Response
+    watsonxJSONResponse = watsonx (output_json_str.get("answer"),"promptJSON", llm_params)
+
+    print (watsonxJSONResponse)
+
+    return classifyResponse(response=watsonxJSONResponse)
+
 @app.post("/watsonchat")
 async def watsonchat(request: watsonchatRequest, api_key: str = Security(get_api_key)):
 
