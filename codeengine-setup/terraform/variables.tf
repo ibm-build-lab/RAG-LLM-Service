@@ -116,7 +116,7 @@ variable "wxd_password" {
 variable "wxd_url" {
   type        = string
   description = "Elasticsearch URL and port. Get from Elasticsearch DB Service->Overview->Endpoints->HTTPS"
-  default = "https://<es_hostname>:<port>"
+  default = ""
 }
 
 variable "wd_api_key" {

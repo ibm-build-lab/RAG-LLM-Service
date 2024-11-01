@@ -17,7 +17,7 @@ wx_project_id = ""
 # The following are optional if you choose to use Watson Discovery
 wxd_username = ""
 wxd_password = ""
-wxd_url = "https://<host>:<port>"
+wxd_url = ""
 
 # Watson Discovery variables (used if WD is the desired document store)
 # The following are optional if you choose to use Watsonx Discovery
