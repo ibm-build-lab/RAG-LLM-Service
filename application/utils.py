@@ -96,6 +96,7 @@ class CloudObjectStorageReader(BaseReader):
             ".pptx": UnstructuredReader(),
             ".txt": FlatReader(),
             ".html": HTMLTagReader(),
+	    ".htm": HTMLTagReader()
         }
         self.readers = {**DEFAULT_READERS, **self.readers}
 

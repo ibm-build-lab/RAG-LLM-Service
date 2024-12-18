@@ -18,6 +18,50 @@
       }
     ],
     "paths": {
+      "/retrieveDocs": {
+        "post": {
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/retrieveDocsResponse"
+                  }
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/retrieveDocsRequest"
+                }
+              }
+            }
+          },
+          "description": "Query ElasticSearch",
+          "summary": "RetrieveDocs",
+          "operationId": "retrieveDocs_retrieveDocs_post",
+          "security": [
+            {
+              "APIKeyHeader": []
+            }
+          ]
+        }
+      },
       "/queryLLM": {
         "post": {
           "responses": {
@@ -233,6 +277,85 @@
             "type"
           ],
           "title": "ValidationError"
+        },
+        "retrieveDocsRequest": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "title": "Question"
+            },
+            "es_index_name": {
+              "type": "string",
+              "title": "Es Index Name"
+            },
+            "es_index_text_field": {
+              "type": "string",
+              "title": "Es Index Text Field",
+              "default": "body_content_field"
+            },
+            "es_model_name": {
+              "type": "string",
+              "title": "Es Model Name",
+              "default": ".elser_model_2_linux-x86_64"
+            },
+            "num_results": {
+              "type": "string",
+              "title": "Num Results",
+              "default": "5"
+            },
+            "es_model_text_field": {
+              "type": "string",
+              "title": "Es Model Text Field",
+              "default": "ml.tokens"
+            },
+            "filters": {
+              "type": "object",
+              "example": {
+                "date": "2022-01-01",
+                "file_name": "test.pdf"
+              },
+              "additionalProperties": {
+                "type": "string"
+              },
+              "title": "Filters"
+            }
+          },
+          "required": [
+            "question",
+            "es_index_name"
+          ],
+          "title": "retrieveDocsRequest"
+        },
+        "retrieveDocsResponse": {
+          "type": "object",
+          "properties": {
+            "references": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "file_name": {
+                    "type": "string",
+                    "description": "The name of the file."
+                  },
+                  "url": {
+                    "type": "string",
+                    "description": "The URL where the file can be accessed."
+                  },
+                  "text": {
+                    "type": "string",
+                    "description": "The extracted text content of the file."
+                  }
+                },
+                "required": ["file_name", "text"]
+              }
+            }
+          },
+          "required": [
+            "references"
+          ],
+          "title": "retrieveDocsResponse"
         },
         "queryLLMRequest": {
           "type": "object",
